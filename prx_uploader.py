@@ -367,14 +367,29 @@ class PRXClient:
 
                 status = self.page.evaluate("""
                     () => {
-                        const body = document.body.textContent || '';
-                        if (body.includes('Still working on it')) return 'processing';
-                        // If "Still working on it" is gone, we're ready
-                        return 'ready';
+                        // Look for "Length" label followed by a time value
+                        const body = document.body.innerHTML || '';
+                        // Check for Length: XX:XX pattern where XX:XX is not 0:00
+                        const lengthMatch = body.match(/Length[:\\s<\\/\\w>]*?(\\d+:\\d{2})/i);
+                        if (lengthMatch) {
+                            const time = lengthMatch[1];
+                            if (time !== '0:00' && time !== '00:00') {
+                                return 'ready: ' + time;
+                            }
+                            return 'length is 0:00';
+                        }
+                        // Fallback: look for any non-zero time near "Complete"
+                        const text = document.body.textContent || '';
+                        if (text.includes('Complete')) {
+                            const m = text.match(/([1-9]\\d*:\\d{2})/);
+                            if (m) return 'ready: ' + m[1];
+                        }
+                        return 'waiting';
                     }
                 """)
-                if status == 'ready':
-                    logger.info("Audio processing complete — ready to publish!")
+                logger.info(f"Publish check: {status}")
+                if status.startswith('ready'):
+                    logger.info(f"Audio ready! {status}")
                     break
                 if attempt % 3 == 0:
                     logger.info(f"Audio status: {status} (waiting, attempt {attempt}...)")
