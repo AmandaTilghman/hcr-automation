@@ -157,61 +157,92 @@ class PRXClient:
         if self.series_names:
             logger.info("Adding to series...")
             try:
-                # Find and click the checkbox input for series
-                # The checkbox may be hidden, so try multiple approaches
-                checkbox = self.page.locator('#piece_series_id_chk, input[id*="series"][type="checkbox"]')
-                if checkbox.count() > 0:
-                    checkbox.first.check(force=True)
-                    time.sleep(2)
-                else:
-                    # Try clicking the label text
-                    self.page.locator('text=Add this piece to a series').first.click()
-                    time.sleep(2)
+                # Use JavaScript to check the checkbox and show the dropdown
+                # This is more reliable than trying to click through Playwright
+                result = self.page.evaluate("""
+                    () => {
+                        // Find all checkboxes and labels
+                        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+                        let found = false;
+                        
+                        // Try to find series checkbox by nearby label text
+                        const labels = document.querySelectorAll('label');
+                        for (const label of labels) {
+                            if (label.textContent.includes('Add this piece to a series')) {
+                                // Click the label
+                                label.click();
+                                found = true;
+                                break;
+                            }
+                        }
+                        
+                        if (!found) {
+                            // Try finding checkbox by ID patterns
+                            const cb = document.querySelector(
+                                '[id*="series"][type="checkbox"], ' +
+                                '[name*="series"][type="checkbox"]'
+                            );
+                            if (cb) {
+                                cb.checked = true;
+                                cb.dispatchEvent(new Event('change', {bubbles: true}));
+                                cb.dispatchEvent(new Event('click', {bubbles: true}));
+                                found = true;
+                            }
+                        }
+                        
+                        return found ? 'checkbox clicked' : 'checkbox not found';
+                    }
+                """)
+                logger.info(f"Series checkbox: {result}")
+                time.sleep(3)
+                self._screenshot("series-after-checkbox")
 
-                self._screenshot("series-checkbox-clicked")
-
-                # Now select from the dropdown using JavaScript if it's hidden
-                series_select = self.page.locator('select#piece_series_id')
-                if series_select.count() > 0:
-                    # Make the select visible first via JS
-                    self.page.evaluate("""
+                # Now try to select the series
+                # First, make sure the dropdown is visible
+                self.page.evaluate("""
+                    () => {
                         const sel = document.querySelector('#piece_series_id');
                         if (sel) {
+                            // Walk up and unhide any hidden parents
+                            let el = sel;
+                            while (el) {
+                                el.style.display = '';
+                                el.style.visibility = 'visible';
+                                el.hidden = false;
+                                if (el.classList) el.classList.remove('hidden', 'hide', 'd-none');
+                                el = el.parentElement;
+                            }
                             sel.style.display = 'block';
-                            sel.style.visibility = 'visible';
-                            sel.closest('.hidden, [style*="display: none"]')
-                                ?.style?.removeProperty('display');
                         }
-                    """)
-                    time.sleep(1)
+                    }
+                """)
+                time.sleep(1)
 
-                    # Try selecting by label
-                    for name in self.series_names:
-                        logger.info(f"Selecting series: {name}")
-                        try:
-                            series_select.select_option(label=name, force=True)
-                            time.sleep(1)
-                            logger.info(f"Selected series: {name}")
-                            break  # PRX likely only allows one series
-                        except Exception:
-                            # Try via JavaScript
-                            try:
-                                self.page.evaluate(f"""
-                                    const sel = document.querySelector('#piece_series_id');
-                                    const opts = Array.from(sel.options);
-                                    const match = opts.find(o =>
-                                        o.text.includes("{name.replace('"', '\\"')}")
-                                    );
-                                    if (match) {{
-                                        sel.value = match.value;
-                                        sel.dispatchEvent(new Event('change'));
-                                    }}
-                                """)
-                                logger.info(f"Selected series via JS: {name}")
-                                time.sleep(1)
-                                break
-                            except Exception as e2:
-                                logger.warning(f"Could not select series '{name}': {e2}")
+                for name in self.series_names:
+                    logger.info(f"Selecting series: {name}")
+                    # Use JavaScript to set the value directly
+                    selected = self.page.evaluate(f"""
+                        () => {{
+                            const sel = document.querySelector('#piece_series_id');
+                            if (!sel) return 'no select found';
+                            const opts = Array.from(sel.options);
+                            const match = opts.find(o => 
+                                o.text.trim().includes("{name.replace('"', '\\"')}")
+                            );
+                            if (match) {{
+                                sel.value = match.value;
+                                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                                sel.dispatchEvent(new Event('input', {{bubbles: true}}));
+                                return 'selected: ' + match.text;
+                            }}
+                            return 'no matching option for: {name.replace('"', '\\"')}';
+                        }}
+                    """)
+                    logger.info(f"Series result: {selected}")
+                    time.sleep(1)
+                    break  # Single select — only one series
+
+                self._screenshot("series-selected")
 
             except Exception as e:
                 logger.warning(f"Series selection failed: {e}")
