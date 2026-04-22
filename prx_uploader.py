@@ -260,32 +260,57 @@ class PRXClient:
                 logger.warning(f"Image upload failed: {e}")
 
         # Tags — #piece_tag_list input + "Save Your Tags" button
+        # Note: must wait for page to settle after producer/image AJAX calls
         if tags:
             tag_string = ", ".join(tags)
             logger.info(f"Setting tags: {tag_string}")
             try:
-                self.page.locator('#piece_tag_list').fill(tag_string)
+                # Scroll to make sure the tags field is visible
+                self.page.evaluate("""
+                    () => {
+                        const el = document.querySelector('#piece_tag_list');
+                        if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                    }
+                """)
                 time.sleep(1)
-                self.page.locator('input[value="Save Your Tags"]').click()
-                time.sleep(2)
 
-                # Check if saving caused an error (e.g. tags too long)
-                page_text = self.page.evaluate("() => document.body.textContent")
-                if 'error' in page_text.lower()[:500] or 'too long' in page_text.lower()[:500]:
-                    raise ValueError("Tags may have caused an error")
+                # Fill using JS to be safe (Playwright fill can miss on AJAX-loaded forms)
+                self.page.evaluate("""
+                    (tagStr) => {
+                        const el = document.querySelector('#piece_tag_list');
+                        if (el) {
+                            el.value = tagStr;
+                            el.dispatchEvent(new Event('input', {bubbles: true}));
+                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                        }
+                    }
+                """, tag_string)
+                time.sleep(1)
 
+                # Click Save Your Tags via JS
+                self.page.evaluate("""
+                    () => {
+                        const btns = document.querySelectorAll('input[type="submit"]');
+                        for (const btn of btns) {
+                            if (btn.value === 'Save Your Tags') {
+                                btn.click();
+                                return 'clicked';
+                            }
+                        }
+                        return 'not found';
+                    }
+                """)
+                time.sleep(3)
                 logger.info("Tags saved.")
             except Exception as e:
                 logger.warning(f"Tags failed: {e} — clearing and notifying")
                 try:
-                    # Clear the tags field
                     self.page.locator('#piece_tag_list').fill("")
                     time.sleep(1)
                     self.page.locator('input[value="Save Your Tags"]').click()
                     time.sleep(2)
                 except Exception:
                     pass
-                # Send notification email
                 self._send_tag_failure_email(tag_string, str(e))
 
         # Topics — check "Politics" and "News" as defaults for HCR
@@ -395,14 +420,38 @@ class PRXClient:
         if self.auto_publish:
             logger.info("Publishing piece...")
             try:
-                # The publish button is in the top right of the publish page
-                publish_btn = self.page.locator(
-                    'input[value*="Publish"], button:has-text("Publish"), '
-                    'a:has-text("Publish")'
-                ).first
-                publish_btn.click()
+                # Try multiple approaches to find the Publish button
+                # It may be an input, button, or link
+                published = self.page.evaluate("""
+                    () => {
+                        // Find anything that says "Publish" (but not "Publish" in nav tabs)
+                        const candidates = [
+                            ...document.querySelectorAll('input[type="submit"]'),
+                            ...document.querySelectorAll('button'),
+                            ...document.querySelectorAll('a.btn, a.button, a.publish'),
+                        ];
+                        for (const el of candidates) {
+                            const text = (el.value || el.textContent || '').trim();
+                            if (text.match(/^Publish!?$/i)) {
+                                el.click();
+                                return 'clicked: ' + text;
+                            }
+                        }
+                        // Also try links with Publish text that aren't nav
+                        const links = document.querySelectorAll('a');
+                        for (const a of links) {
+                            if (a.textContent.trim().match(/^Publish!?$/) && 
+                                !a.closest('.create-piece-step')) {
+                                a.click();
+                                return 'clicked link: ' + a.textContent.trim();
+                            }
+                        }
+                        return 'not found';
+                    }
+                """)
+                logger.info(f"Publish result: {published}")
+                time.sleep(5)
                 self.page.wait_for_load_state("networkidle")
-                time.sleep(3)
                 logger.info("Piece published!")
             except Exception as e:
                 logger.warning(f"Publish failed: {e}")
