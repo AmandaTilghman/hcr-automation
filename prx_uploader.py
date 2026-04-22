@@ -373,49 +373,35 @@ class PRXClient:
     def _publish(self) -> str:
         logger.info("=== PUBLISH TAB ===")
 
-        # Wait for audio processing — reload page to check if "Still working on it..." is gone
-        logger.info("Waiting for audio processing to complete...")
-        current_url = self.page.url
-        for attempt in range(120):  # Up to 10 min
+        # Wait for audio processing — check page text for non-zero length
+        logger.info("Waiting for audio to be ready...")
+        for attempt in range(60):  # Up to 5 min
             try:
-                # Reload the page to get fresh status (only every 30s)
+                # Simple check: get all text, look for any time like X:XX or XX:XX
+                page_text = self.page.evaluate("() => document.body.textContent")
+                
+                # Find all time patterns
+                import re
+                times = re.findall(r'\b(\d{1,2}:\d{2})\b', page_text)
+                non_zero = [t for t in times if t != '0:00' and t != '00:00']
+                
+                if non_zero:
+                    logger.info(f"Audio ready! Found duration: {non_zero[0]}")
+                    break
+                
+                if attempt % 3 == 0:
+                    logger.info(f"Waiting for duration... (attempt {attempt}, found times: {times})")
+                
+                # Reload every 30s to get fresh content
                 if attempt > 0 and attempt % 6 == 0:
                     self.page.reload(wait_until="networkidle")
                     time.sleep(2)
-
-                status = self.page.evaluate("""
-                    () => {
-                        // Look for "Length" label followed by a time value
-                        const body = document.body.innerHTML || '';
-                        // Check for Length: XX:XX pattern where XX:XX is not 0:00
-                        const lengthMatch = body.match(/Length[:\\s<\\/\\w>]*?(\\d+:\\d{2})/i);
-                        if (lengthMatch) {
-                            const time = lengthMatch[1];
-                            if (time !== '0:00' && time !== '00:00') {
-                                return 'ready: ' + time;
-                            }
-                            return 'length is 0:00';
-                        }
-                        // Fallback: look for any non-zero time near "Complete"
-                        const text = document.body.textContent || '';
-                        if (text.includes('Complete')) {
-                            const m = text.match(/([1-9]\\d*:\\d{2})/);
-                            if (m) return 'ready: ' + m[1];
-                        }
-                        return 'waiting';
-                    }
-                """)
-                logger.info(f"Publish check: {status}")
-                if status.startswith('ready'):
-                    logger.info(f"Audio ready! {status}")
-                    break
-                if attempt % 3 == 0:
-                    logger.info(f"Audio status: {status} (waiting, attempt {attempt}...)")
-                time.sleep(5)
+                else:
+                    time.sleep(5)
             except Exception:
                 time.sleep(5)
         else:
-            logger.warning("Audio processing didn't complete in 10 min — trying to publish anyway")
+            logger.warning("Duration still 0:00 after 5 min — trying to publish anyway")
 
         if self.auto_publish:
             logger.info("Publishing piece...")
