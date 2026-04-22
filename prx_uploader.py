@@ -212,6 +212,36 @@ class PRXClient:
         else:
             logger.warning("Audio processing didn't complete in 10 min — continuing anyway")
 
+        # Content Advisory — checkbox has dynamic ID with audio version number
+        logger.info("Setting content advisory to Explicit...")
+        try:
+            self.page.evaluate("""
+                () => {
+                    const cbs = document.querySelectorAll('input[type="checkbox"]');
+                    for (const cb of cbs) {
+                        if (cb.id && cb.id.startsWith('content_advisory_audio_version')) {
+                            cb.click();
+                            const match = cb.id.match(/\\[(\\d+)\\]/);
+                            if (match) {
+                                const avId = match[1];
+                                const radio = document.querySelector(
+                                    '#audio_version_' + avId + '_explicit_yes'
+                                );
+                                if (radio) {
+                                    radio.disabled = false;
+                                    radio.click();
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            """)
+            time.sleep(2)
+            logger.info("Content advisory set.")
+        except Exception as e:
+            logger.warning(f"Content advisory failed: {e}")
+
         self._screenshot("basics-filled")
         self._click_save_and_continue()
 
@@ -222,13 +252,17 @@ class PRXClient:
         logger.info("=== DETAILS TAB ===")
 
         # Producer — #producer_name input + "Add Producer" submit button
+        # Note: "Add Producer" submits via AJAX — wait for spinner to clear
         if self.producer_name:
             logger.info(f"Adding producer: {self.producer_name}")
             try:
                 self.page.locator('#producer_name').fill(self.producer_name)
                 time.sleep(1)
                 self.page.locator('input[value="Add Producer"]').click()
-                time.sleep(3)
+                # Wait for AJAX to complete (producer_spinner hides when done)
+                time.sleep(5)
+                self.page.wait_for_load_state("networkidle")
+                time.sleep(2)
                 logger.info("Producer added.")
             except Exception as e:
                 logger.warning(f"Producer failed: {e}")
@@ -331,9 +365,38 @@ class PRXClient:
     def _publish(self) -> str:
         logger.info("=== PUBLISH TAB ===")
 
+        # Wait for audio duration to not be 0:00
+        logger.info("Waiting for audio duration to be ready...")
+        for attempt in range(60):  # Up to 5 min
+            try:
+                ready = self.page.evaluate("""
+                    () => {
+                        const text = document.body.textContent || '';
+                        // Look for a duration that's not 0:00
+                        const match = text.match(/(\\d+):(\\d{2})/g);
+                        if (match) {
+                            for (const m of match) {
+                                if (m !== '0:00' && m !== '00:00') return 'ready: ' + m;
+                            }
+                        }
+                        return 'not ready';
+                    }
+                """)
+                if ready.startswith('ready'):
+                    logger.info(f"Audio duration {ready}")
+                    break
+                if attempt % 6 == 0:
+                    logger.info(f"Duration status: {ready} (waiting...)")
+                time.sleep(5)
+            except Exception:
+                time.sleep(5)
+        else:
+            logger.warning("Duration still 0:00 after 5 min — publishing anyway")
+
         if self.auto_publish:
             logger.info("Publishing piece...")
             try:
+                # The publish button is in the top right of the publish page
                 publish_btn = self.page.locator(
                     'input[value*="Publish"], button:has-text("Publish"), '
                     'a:has-text("Publish")'
