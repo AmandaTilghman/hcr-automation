@@ -1,247 +1,101 @@
 """
-PRX Uploader
-=============
-Handles OAuth2 authentication and story creation/upload via the PRX CMS API.
+PRX Uploader (Browser Automation)
+==================================
+Uses Playwright to automate the PRX Exchange upload workflow:
+  1. Log in to exchange.prx.org
+  2. Navigate to My PRX → Create New Piece
+  3. Upload audio file
+  4. Fill in title, description, tags
+  5. Publish
 
-PRX API docs:
-  - API root: https://cms.prx.org/api/v1
-  - HAL browser: https://cms.prx.org/browser/index.html
-  - OAuth: https://id.prx.org
-
-NOTE: PRX's upload flow uses signed S3 uploads. The workflow is:
-  1. Authenticate via OAuth2 (id.prx.org)
-  2. Create a story via the CMS API
-  3. Get a signed upload URL from the upload service
-  4. Upload audio directly to S3 using the signed URL
-  5. Attach the uploaded audio to the story
-  6. Optionally publish the story
-
-This module handles all of that. You'll need to register an OAuth app
-with PRX to get client_id/client_secret.
+This is a fallback approach until PRX provides OAuth API credentials.
+Requires: playwright (pip install playwright && playwright install chromium)
 """
 
 import logging
+import time
 from pathlib import Path
 
-import requests
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger("radio-automation.prx")
 
-# PRX API endpoints
-PRX_ID_URL = "https://id.prx.org"
-PRX_CMS_URL = "https://cms.prx.org/api/v1"
-PRX_UPLOAD_URL = "https://upload.prx.org"
+PRX_LOGIN_URL = "https://exchange.prx.org/login"
+PRX_NEW_PIECE_URL = "https://exchange.prx.org/pieces/new"
+PRX_MY_URL = "https://exchange.prx.org/my"
 
 
 class PRXClient:
-    """Client for the PRX CMS API."""
+    """Browser-based PRX uploader using Playwright."""
 
     def __init__(self, config: dict):
-        self.client_id = config["client_id"]
-        self.client_secret = config["client_secret"]
         self.username = config["username"]
         self.password = config["password"]
-        self.account_id = config.get("account_id", "")
-        self.series_id = config.get("series_id", "")
         self.default_tags = config.get("default_tags", [])
         self.default_description = config.get("default_description", "")
-        self.access_token = None
-        self.session = requests.Session()
+        self.series_id = config.get("series_id", "")
+        self.auto_publish = config.get("auto_publish", False)
+        self.headless = config.get("headless", True)
+        self.browser = None
+        self.page = None
+        self.playwright = None
 
     def authenticate(self):
-        """
-        Obtain OAuth2 access token via Resource Owner Password grant.
+        """Launch browser and log into PRX Exchange."""
+        logger.info("Launching browser and logging into PRX...")
 
-        If PRX supports a different grant type for your use case,
-        adjust accordingly. Check id.prx.org for available grant types.
-        """
-        logger.info("Authenticating with PRX...")
+        self.playwright = sync_playwright().start()
+        self.browser = self.playwright.chromium.launch(headless=self.headless)
+        context = self.browser.new_context()
+        self.page = context.new_page()
 
-        token_url = f"{PRX_ID_URL}/oauth/token"
-        payload = {
-            "grant_type": "password",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-            "username": self.username,
-            "password": self.password,
-        }
+        # Navigate to login
+        self.page.goto(PRX_LOGIN_URL, wait_until="networkidle")
 
-        resp = requests.post(token_url, data=payload)
-        resp.raise_for_status()
+        # Fill login form
+        # PRX uses id.prx.org for auth — may redirect there
+        self.page.wait_for_load_state("networkidle")
 
-        data = resp.json()
-        self.access_token = data["access_token"]
-        self.session.headers.update({
-            "Authorization": f"Bearer {self.access_token}",
-            "Accept": "application/hal+json",
-        })
+        # Try to find login fields (may be on id.prx.org after redirect)
+        try:
+            # Look for email/username field
+            email_field = self.page.locator(
+                'input[name="login"], input[name="email"], '
+                'input[type="email"], input[name="user[login]"]'
+            ).first
+            email_field.fill(self.username)
 
-        logger.info("Authenticated successfully.")
+            # Look for password field
+            password_field = self.page.locator(
+                'input[name="password"], input[type="password"], '
+                'input[name="user[password]"]'
+            ).first
+            password_field.fill(self.password)
 
-    def _get(self, url: str, **kwargs) -> dict:
-        resp = self.session.get(url, **kwargs)
-        resp.raise_for_status()
-        return resp.json()
+            # Submit
+            submit_btn = self.page.locator(
+                'input[type="submit"], button[type="submit"], '
+                'button:has-text("Log in"), button:has-text("Sign in")'
+            ).first
+            submit_btn.click()
 
-    def _post(self, url: str, **kwargs) -> dict:
-        resp = self.session.post(url, **kwargs)
-        resp.raise_for_status()
-        return resp.json()
+            self.page.wait_for_load_state("networkidle")
+            logger.info("Logged in successfully.")
 
-    def _put(self, url: str, **kwargs) -> dict:
-        resp = self.session.put(url, **kwargs)
-        resp.raise_for_status()
-        return resp.json()
-
-    def get_account(self) -> dict:
-        """Get the authenticated user's account info."""
-        auth_info = self._get(f"{PRX_CMS_URL}/authorization")
-        # Follow the account link
-        account_link = auth_info.get("_links", {}).get("prx:default-account", {})
-        if account_link:
-            return self._get(account_link["href"])
-        return auth_info
-
-    def create_story(self, title: str, description: str = "",
-                     tags: list = None, series_id: str = None) -> dict:
-        """
-        Create a new story (piece) on PRX.
-
-        Returns the created story resource (HAL JSON).
-        """
-        all_tags = list(set((tags or []) + self.default_tags))
-        desc = description or self.default_description
-
-        story_data = {
-            "title": title,
-            "shortDescription": desc[:200] if desc else title,
-            "description": desc or title,
-            "tags": all_tags,
-            "length": 0,  # Will be updated after audio upload
-        }
-
-        # Determine where to create the story
-        target_series = series_id or self.series_id
-        if target_series:
-            url = f"{PRX_CMS_URL}/series/{target_series}/stories"
-        elif self.account_id:
-            url = f"{PRX_CMS_URL}/accounts/{self.account_id}/stories"
-        else:
-            url = f"{PRX_CMS_URL}/stories"
-
-        logger.info(f"Creating story: '{title}'")
-        story = self._post(url, json=story_data)
-        story_id = story.get("id", "unknown")
-        logger.info(f"Created story ID: {story_id}")
-        return story
-
-    def upload_audio(self, story: dict, audio_path: Path) -> dict:
-        """
-        Upload audio file for a story.
-
-        PRX uses signed S3 uploads. The flow:
-        1. POST to the story's audio endpoint to get an upload ticket
-        2. Upload the file to S3 using the signed URL
-        3. Return the audio resource
-        """
-        audio_path = Path(audio_path)
-        file_size = audio_path.stat().st_size
-        filename = audio_path.name
-
-        # Get the story's audio upload link
-        links = story.get("_links", {})
-        audio_link = links.get("prx:audio", links.get("prx:audio-versions", {}))
-
-        if isinstance(audio_link, list):
-            audio_link = audio_link[0]
-
-        audio_url = audio_link.get("href", "")
-        if not audio_url:
-            # Fallback: construct from story ID
-            story_id = story.get("id")
-            audio_url = f"{PRX_CMS_URL}/stories/{story_id}/audio_versions"
-
-        # Create audio version
-        logger.info(f"Creating audio version for: {filename} ({file_size} bytes)")
-        audio_data = {
-            "label": filename,
-            "files": [{
-                "filename": filename,
-                "size": file_size,
-                "contentType": "audio/mpeg",  # MP2 uses audio/mpeg MIME type
-            }]
-        }
-
-        audio_version = self._post(audio_url, json=audio_data)
-
-        # Get the upload URL from the response
-        # PRX returns a signed S3 upload URL in the audio file resource
-        files_info = audio_version.get("_embedded", {}).get("prx:audio-files", [])
-
-        if not files_info:
-            # Try direct upload endpoint
-            logger.warning("No signed upload URL found — trying direct upload")
-            return self._direct_upload(story, audio_path)
-
-        for file_info in files_info:
-            upload_links = file_info.get("_links", {})
-            upload_url = upload_links.get("prx:upload", {}).get("href", "")
-
-            if upload_url:
-                logger.info(f"Uploading to signed URL...")
-                with open(audio_path, "rb") as f:
-                    upload_resp = requests.put(
-                        upload_url,
-                        data=f,
-                        headers={"Content-Type": "audio/mpeg"},
-                    )
-                    upload_resp.raise_for_status()
-                logger.info("Audio uploaded successfully.")
-
-        return audio_version
-
-    def _direct_upload(self, story: dict, audio_path: Path) -> dict:
-        """
-        Fallback: try uploading audio directly if signed URL flow
-        doesn't work. Some PRX setups may differ.
-        """
-        story_id = story.get("id")
-        url = f"{PRX_CMS_URL}/stories/{story_id}/audio_files"
-
-        with open(audio_path, "rb") as f:
-            resp = self.session.post(
-                url,
-                files={"file": (audio_path.name, f, "audio/mpeg")},
+        except PlaywrightTimeout:
+            # Take a screenshot for debugging
+            self.page.screenshot(path="prx-login-debug.png")
+            raise RuntimeError(
+                "Could not find login form on PRX. "
+                "Screenshot saved to prx-login-debug.png for debugging."
             )
-            resp.raise_for_status()
 
-        return resp.json()
-
-    def publish_story(self, story: dict) -> str:
-        """
-        Publish a story. Returns the public URL.
-        """
-        links = story.get("_links", {})
-        publish_link = links.get("prx:publish", {})
-
-        if publish_link:
-            url = publish_link.get("href", "")
-            if url:
-                self._put(url)
-                logger.info("Story published!")
-        else:
-            # Try updating the story status
-            story_id = story.get("id")
-            self._put(
-                f"{PRX_CMS_URL}/stories/{story_id}",
-                json={"published": True}
-            )
-            logger.info("Story published via status update.")
-
-        # Return a link to the story
-        self_link = links.get("self", {}).get("href", "")
-        public_link = links.get("alternate", {}).get("href", "")
-        return public_link or self_link or f"Story ID: {story.get('id')}"
+    def _close(self):
+        """Clean up browser resources."""
+        if self.browser:
+            self.browser.close()
+        if self.playwright:
+            self.playwright.stop()
 
     def create_and_upload_story(
         self,
@@ -252,25 +106,137 @@ class PRXClient:
         publish: bool = False,
     ) -> str:
         """
-        Full workflow: create story → upload audio → optionally publish.
-        Returns the story URL.
+        Full workflow: create piece → upload audio → fill details → publish.
+        Returns the piece URL.
         """
         audio_path = Path(audio_path)
+        all_tags = list(set((tags or []) + self.default_tags))
+        desc = description or self.default_description or title
 
-        # Create the story
-        story = self.create_story(
-            title=title,
-            description=description,
-            tags=tags,
-        )
+        try:
+            # Navigate to create new piece
+            logger.info("Navigating to Create New Piece...")
+            self.page.goto(PRX_NEW_PIECE_URL, wait_until="networkidle")
 
-        # Upload audio
-        self.upload_audio(story, audio_path)
+            # --- Upload audio file ---
+            logger.info(f"Uploading audio: {audio_path.name}")
 
-        # Publish if requested
-        if publish:
-            return self.publish_story(story)
+            # Look for file input (may be hidden, used by the browse button)
+            file_input = self.page.locator('input[type="file"]').first
+            file_input.set_input_files(str(audio_path))
 
-        # Return draft URL
-        self_link = story.get("_links", {}).get("self", {}).get("href", "")
-        return self_link or f"Draft story ID: {story.get('id')}"
+            # Wait for upload to process (this can take a while for large files)
+            logger.info("Waiting for upload to complete...")
+            time.sleep(5)  # Initial wait for upload to start
+
+            # Wait for any upload progress indicators to finish
+            try:
+                # Wait for upload/processing indicators to disappear
+                self.page.wait_for_selector(
+                    '.upload-progress, .uploading, .processing',
+                    state='hidden',
+                    timeout=300000,  # 5 min timeout for large files
+                )
+            except PlaywrightTimeout:
+                logger.warning("Upload progress indicator didn't clear — continuing anyway")
+
+            # --- Fill in title ---
+            logger.info(f"Setting title: {title}")
+            try:
+                title_field = self.page.locator(
+                    'input[name*="title"], input#piece_title, '
+                    'input[placeholder*="title" i]'
+                ).first
+                title_field.fill(title)
+            except Exception as e:
+                logger.warning(f"Could not find title field: {e}")
+
+            # --- Fill in description ---
+            logger.info("Setting description...")
+            try:
+                desc_field = self.page.locator(
+                    'textarea[name*="description"], textarea#piece_description, '
+                    'textarea[placeholder*="description" i], '
+                    'textarea[name*="short_description"]'
+                ).first
+                desc_field.fill(desc[:500])
+            except Exception as e:
+                logger.warning(f"Could not find description field: {e}")
+
+            # --- Fill in tags ---
+            if all_tags:
+                logger.info(f"Setting tags: {', '.join(all_tags)}")
+                try:
+                    tags_field = self.page.locator(
+                        'input[name*="tag"], input#piece_tags, '
+                        'input[placeholder*="tag" i]'
+                    ).first
+                    tags_field.fill(", ".join(all_tags))
+                except Exception as e:
+                    logger.warning(f"Could not find tags field: {e}")
+
+            # --- Add to series if configured ---
+            if self.series_id:
+                logger.info(f"Adding to series: {self.series_id}")
+                try:
+                    series_checkbox = self.page.locator(
+                        'input[name*="series"], label:has-text("series")'
+                    ).first
+                    series_checkbox.click()
+                    time.sleep(1)
+
+                    series_select = self.page.locator(
+                        'select[name*="series"]'
+                    ).first
+                    series_select.select_option(value=self.series_id)
+                except Exception as e:
+                    logger.warning(f"Could not set series: {e}")
+
+            # --- Save / Publish ---
+            if publish or self.auto_publish:
+                logger.info("Publishing piece...")
+                try:
+                    publish_btn = self.page.locator(
+                        'input[value*="Publish"], button:has-text("Publish"), '
+                        'input[name="commit"][value*="Publish"]'
+                    ).first
+                    publish_btn.click()
+                except Exception:
+                    # Fall back to save
+                    logger.warning("No publish button found, trying save...")
+                    save_btn = self.page.locator(
+                        'input[type="submit"], button[type="submit"], '
+                        'input[value*="Save"], button:has-text("Save")'
+                    ).first
+                    save_btn.click()
+            else:
+                logger.info("Saving piece as draft...")
+                save_btn = self.page.locator(
+                    'input[type="submit"], button[type="submit"], '
+                    'input[value*="Save"], button:has-text("Save")'
+                ).first
+                save_btn.click()
+
+            self.page.wait_for_load_state("networkidle")
+
+            # Get the piece URL
+            piece_url = self.page.url
+            logger.info(f"Piece saved: {piece_url}")
+
+            # Take a screenshot for confirmation
+            self.page.screenshot(path="prx-upload-complete.png")
+            logger.info("Screenshot saved: prx-upload-complete.png")
+
+            return piece_url
+
+        except Exception as e:
+            # Screenshot for debugging
+            try:
+                self.page.screenshot(path="prx-upload-error.png")
+                logger.error("Error screenshot saved: prx-upload-error.png")
+            except Exception:
+                pass
+            raise RuntimeError(f"PRX upload failed: {e}")
+
+        finally:
+            self._close()

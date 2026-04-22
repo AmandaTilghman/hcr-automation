@@ -28,19 +28,19 @@ transcode:
   bitrate: "384k"                       # Common for broadcast MP2
 
 prx:
-  # OAuth2 credentials — register an app at id.prx.org
-  client_id: ""
-  client_secret: ""
-  # Your PRX account credentials
+  # PRX Exchange login (exchange.prx.org)
   username: ""
   password: ""
-  # Defaults for new pieces/stories
-  account_id: ""                        # Your PRX account ID
-  series_id: ""                         # Optional: series to attach stories to
+  # Optional: series ID to attach pieces to
+  series_id: ""
+  # Defaults for new pieces
   default_tags: ["community-radio"]
   default_description: ""
-  # Set to true to auto-publish (false = draft only)
+  # Set to true to auto-publish (false = save as draft)
   auto_publish: false
+  # Run browser visibly (false) or hidden (true)
+  # Set to false for debugging so you can watch what it does
+  headless: false
 
 schedule:
   # Polling window (Eastern Time)
