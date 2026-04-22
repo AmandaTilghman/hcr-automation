@@ -72,6 +72,36 @@ class PRXClient:
         if self.playwright:
             self.playwright.stop()
 
+    def _send_tag_failure_email(self, tags: str, error: str):
+        """Send notification to Amanda that tags didn't work."""
+        import smtplib
+        from email.mime.text import MIMEText
+
+        try:
+            # Use the same IMAP credentials for sending
+            import yaml
+            with open('config.yaml') as f:
+                cfg = yaml.safe_load(f)
+            email_cfg = cfg.get('email', {})
+
+            msg = MIMEText(
+                f"The automated PRX upload completed but tags could not be saved.\n\n"
+                f"Tags attempted:\n{tags}\n\n"
+                f"Error: {error}\n\n"
+                f"Please add tags manually in PRX."
+            )
+            msg['Subject'] = 'HCR Automation: Tags failed — manual entry needed'
+            msg['From'] = email_cfg['username']
+            msg['To'] = 'amanda@whcp.org'
+
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+                server.login(email_cfg['username'], email_cfg['password'])
+                server.send_message(msg)
+
+            logger.info("Tag failure notification sent to amanda@whcp.org")
+        except Exception as e:
+            logger.warning(f"Could not send tag failure email: {e}")
+
     def _screenshot(self, name: str):
         try:
             self.page.screenshot(path=f"prx-{name}.png")
@@ -304,9 +334,25 @@ class PRXClient:
                 time.sleep(1)
                 self.page.locator('input[value="Save Your Tags"]').click()
                 time.sleep(2)
+
+                # Check if saving caused an error (e.g. tags too long)
+                page_text = self.page.evaluate("() => document.body.textContent")
+                if 'error' in page_text.lower()[:500] or 'too long' in page_text.lower()[:500]:
+                    raise ValueError("Tags may have caused an error")
+
                 logger.info("Tags saved.")
             except Exception as e:
-                logger.warning(f"Tags failed: {e}")
+                logger.warning(f"Tags failed: {e} — clearing and notifying")
+                try:
+                    # Clear the tags field
+                    self.page.locator('#piece_tag_list').fill("")
+                    time.sleep(1)
+                    self.page.locator('input[value="Save Your Tags"]').click()
+                    time.sleep(2)
+                except Exception:
+                    pass
+                # Send notification email
+                self._send_tag_failure_email(tag_string, str(e))
 
         # Topics — check "Politics" and "News" as defaults for HCR
         logger.info("Setting topics: Politics, News")
