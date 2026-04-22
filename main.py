@@ -159,15 +159,14 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
 def extract_metadata(notification: dict, audio_path: Path) -> dict:
     """
     Pull metadata from the email notification and filename.
-    Customize this based on your email format.
+    Tags are extracted from the email body's 'Key Words' section.
     """
-    # Default: use filename as title, strip extension
     title = Path(audio_path).stem.replace("_", " ").replace("-", " ").title()
 
     return {
         "title": title,
         "description": notification.get("body_preview", ""),
-        "tags": [],  # Will be merged with defaults in PRX uploader
+        "tags": notification.get("tags", []),
     }
 
 

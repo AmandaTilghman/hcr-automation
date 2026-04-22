@@ -10,7 +10,38 @@ import email
 from email.header import decode_header
 import logging
 
+import re
+
 logger = logging.getLogger("radio-automation.email")
+
+
+def extract_keywords(body: str) -> list:
+    """
+    Extract keywords from the email body.
+    Looks for 'Key Words' followed by a comma-separated list.
+    """
+    if not body:
+        return []
+
+    # Match "Key Words" (case-insensitive) followed by the keyword list
+    # Keywords can be on the same line or the next line(s)
+    match = re.search(
+        r'[Kk]ey\s*[Ww]ords?\s*[:\n]\s*(.+?)(?:\n\s*\n|\n\s*-|\Z)',
+        body,
+        re.DOTALL
+    )
+
+    if not match:
+        return []
+
+    raw = match.group(1).strip()
+    # Split by comma, clean up each tag
+    tags = [t.strip().rstrip(',').strip() for t in raw.split(',')]
+    # Remove empty strings
+    tags = [t for t in tags if t]
+
+    logger.info(f"Extracted {len(tags)} keywords from email: {', '.join(tags)}")
+    return tags
 
 
 def decode_subject(subject_raw) -> str:
@@ -114,12 +145,16 @@ def check_for_notification(email_config: dict) -> dict | None:
 
         mail.logout()
 
+        # Extract keywords/tags from body
+        tags = extract_keywords(body_preview)
+
         return {
             "email_id": message_id,
             "subject": subject,
             "from": sender,
             "date": date,
             "body_preview": body_preview.strip(),
+            "tags": tags,
         }
 
     except imaplib.IMAP4.error as e:
