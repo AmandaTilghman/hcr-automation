@@ -347,7 +347,32 @@ class PRXClient:
             logger.warning(f"Edit/excerpt failed: {e}")
 
         self._screenshot("permissions-filled")
+
+        # Save permissions first via Save and Continue
         self._click_save_and_continue()
+        time.sleep(2)
+
+        # We might be on Preview tab now. Check if we need to navigate to Publish
+        # Use the tab navigation to go to the Publish/Preview tab
+        logger.info("Ensuring we're on the Publish tab...")
+        current_text = self.page.evaluate("() => document.body.textContent.substring(0, 500)")
+        logger.info(f"Current page content start: {current_text[:200]}")
+        
+        # If we're not on publish, click the Publish tab via nav
+        tab_result = self.page.evaluate("""
+            () => {
+                const steps = document.querySelectorAll('.create-piece-step a');
+                for (const a of steps) {
+                    if (a.textContent.trim() === 'Publish') {
+                        a.click();
+                        return 'clicked Publish tab';
+                    }
+                }
+                return 'no Publish tab found';
+            }
+        """)
+        logger.info(f"Tab navigation: {tab_result}")
+        time.sleep(5)
 
     # =========================================================================
     # TAB 4: PUBLISH
