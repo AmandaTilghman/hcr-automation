@@ -269,20 +269,9 @@ class PRXClient:
             logger.warning(f"Could not set description: {e}")
 
         # --- Content Advisory (sensitive language) ---
-        logger.info("Checking content advisory...")
-        try:
-            advisory_label = self.page.locator('text=Include content advisory')
-            if advisory_label.count() > 0:
-                advisory_label.first.click()
-                time.sleep(1)
-                # Select "Explicit" if available
-                explicit = self.page.locator(
-                    'label:has-text("Explicit"), input[value*="explicit"]'
-                )
-                if explicit.count() > 0:
-                    explicit.first.click()
-        except Exception as e:
-            logger.warning(f"Could not set content advisory: {e}")
+        # TODO: Re-enable once we identify the correct selectors
+        # Skipping for now to avoid blocking the flow
+        logger.info("Skipping content advisory for now...")
 
         self._screenshot("basics-filled")
         self._click_save_and_continue()
