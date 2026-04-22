@@ -206,35 +206,9 @@ class PRXClient:
         except Exception as e:
             logger.warning(f"Description failed: {e}")
 
-        # Content Advisory — checkbox has dynamic ID with audio version number
-        logger.info("Setting content advisory to Explicit...")
-        try:
-            self.page.evaluate("""
-                () => {
-                    const cbs = document.querySelectorAll('input[type="checkbox"]');
-                    for (const cb of cbs) {
-                        if (cb.id && cb.id.startsWith('content_advisory_audio_version')) {
-                            cb.click();
-                            const match = cb.id.match(/\\[(\\d+)\\]/);
-                            if (match) {
-                                const avId = match[1];
-                                const radio = document.querySelector(
-                                    '#audio_version_' + avId + '_explicit_yes'
-                                );
-                                if (radio) {
-                                    radio.disabled = false;
-                                    radio.click();
-                                }
-                            }
-                            break;
-                        }
-                    }
-                }
-            """)
-            time.sleep(2)
-            logger.info("Content advisory set.")
-        except Exception as e:
-            logger.warning(f"Content advisory failed: {e}")
+        # Content Advisory — skip for now, can be set manually
+        # The dynamic checkbox/radio interaction is unreliable in automation
+        logger.info("Skipping content advisory (set manually if needed).")
 
         self._screenshot("basics-filled")
         self._click_save_and_continue()
@@ -245,21 +219,17 @@ class PRXClient:
     def _fill_details_tab(self, tags: list):
         logger.info("=== DETAILS TAB ===")
 
-        # Producer — #producer_name input + "Add Producer" submit button
-        # Note: "Add Producer" submits via AJAX — wait for spinner to clear
+        # Producer — #producer_name input + "Add Producer" submit via AJAX
         if self.producer_name:
             logger.info(f"Adding producer: {self.producer_name}")
             try:
-                self.page.locator('#producer_name').fill(self.producer_name)
+                self.page.locator('#producer_name').fill(self.producer_name, timeout=5000)
                 time.sleep(1)
-                self.page.locator('input[value="Add Producer"]').click()
-                # Wait for AJAX to complete (producer_spinner hides when done)
+                self.page.locator('input[value="Add Producer"]').click(timeout=5000)
                 time.sleep(5)
-                self.page.wait_for_load_state("networkidle")
-                time.sleep(2)
                 logger.info("Producer added.")
             except Exception as e:
-                logger.warning(f"Producer failed: {e}")
+                logger.warning(f"Producer failed: {e} — skipping")
 
         # Image — the image upload section is visible by default
         #        #add_images checkbox HIDES it ("I don't have an image")
