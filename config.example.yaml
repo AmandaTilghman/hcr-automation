@@ -33,11 +33,15 @@ prx:
   password: ""
   # Optional: series ID to attach pieces to
   series_id: ""
-  # Defaults for new pieces
-  default_tags: ["community-radio"]
+  # Producer name for pieces
+  producer_name: "Lisa Adams"
+  # Path to image file for pieces (relative to project dir)
+  image_path: "assets/piece-image.jpg"
+  # Default tags for pieces
+  default_tags: ["community-radio", "letters-from-an-american", "heather-cox-richardson"]
   default_description: ""
   # Set to true to auto-publish (false = save as draft)
-  auto_publish: false
+  auto_publish: true
   # Run browser visibly (false) or hidden (true)
   # Set to false for debugging so you can watch what it does
   headless: false
