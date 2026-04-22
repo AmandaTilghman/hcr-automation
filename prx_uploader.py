@@ -402,41 +402,33 @@ class PRXClient:
         if self.auto_publish:
             logger.info("Publishing piece...")
             try:
-                # Try multiple approaches to find the Publish button
-                # It may be an input, button, or link
-                published = self.page.evaluate("""
-                    () => {
-                        // Find anything that says "Publish" (but not "Publish" in nav tabs)
-                        const candidates = [
-                            ...document.querySelectorAll('input[type="submit"]'),
-                            ...document.querySelectorAll('button'),
-                            ...document.querySelectorAll('a.btn, a.button, a.publish'),
-                        ];
-                        for (const el of candidates) {
-                            const text = (el.value || el.textContent || '').trim();
-                            if (text.match(/^Publish!?$/i)) {
-                                el.click();
-                                return 'clicked: ' + text;
-                            }
-                        }
-                        // Also try links with Publish text that aren't nav
-                        const links = document.querySelectorAll('a');
-                        for (const a of links) {
-                            if (a.textContent.trim().match(/^Publish!?$/) && 
-                                !a.closest('.create-piece-step')) {
-                                a.click();
-                                return 'clicked link: ' + a.textContent.trim();
-                            }
-                        }
-                        return 'not found';
-                    }
-                """)
-                logger.info(f"Publish result: {published}")
+                # The Publish button is: input#piece_submit[value="Publish"]
+                self.page.locator('input#piece_submit[value="Publish"]').first.click(force=True)
+                logger.info("Clicked Publish button!")
                 time.sleep(5)
                 self.page.wait_for_load_state("networkidle")
+                time.sleep(2)
                 logger.info("Piece published!")
             except Exception as e:
-                logger.warning(f"Publish failed: {e}")
+                logger.warning(f"Publish click failed: {e}")
+                # Fallback: try via JS
+                try:
+                    result = self.page.evaluate("""
+                        () => {
+                            const inputs = document.querySelectorAll('input[type="submit"]');
+                            for (const inp of inputs) {
+                                if (inp.value === 'Publish') {
+                                    inp.click();
+                                    return 'clicked via JS';
+                                }
+                            }
+                            return 'not found';
+                        }
+                    """)
+                    logger.info(f"Publish JS fallback: {result}")
+                    time.sleep(5)
+                except Exception as e2:
+                    logger.warning(f"Publish JS fallback also failed: {e2}")
         else:
             logger.info("Auto-publish disabled — leaving as draft.")
 
