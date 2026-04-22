@@ -351,22 +351,41 @@ class PRXClient:
             try:
                 ready = self.page.evaluate("""
                     () => {
-                        const text = document.body.textContent || '';
-                        // Look for a duration that's not 0:00
-                        const match = text.match(/(\\d+):(\\d{2})/g);
-                        if (match) {
-                            for (const m of match) {
-                                if (m !== '0:00' && m !== '00:00') return 'ready: ' + m;
+                        // Look specifically in the audio file table or piece info
+                        const tables = document.querySelectorAll('table');
+                        for (const table of tables) {
+                            const text = table.textContent || '';
+                            const match = text.match(/(\\d+):(\\d{2})/g);
+                            if (match) {
+                                for (const m of match) {
+                                    if (m !== '0:00' && m !== '00:00') return 'ready: ' + m;
+                                }
                             }
+                        }
+                        // Also check any element with duration/length/time class
+                        const els = document.querySelectorAll(
+                            '.duration, .length, .time, td'
+                        );
+                        for (const el of els) {
+                            const text = el.textContent.trim();
+                            const match = text.match(/^(\\d+):(\\d{2})$/);
+                            if (match && text !== '0:00' && text !== '00:00') {
+                                return 'ready: ' + text;
+                            }
+                        }
+                        // Last resort: check full page but be more specific
+                        const body = document.body.textContent || '';
+                        if (body.includes('Complete') && body.match(/[1-9]\\d*:\\d{2}/)) {
+                            const m = body.match(/([1-9]\\d*:\\d{2})/);
+                            if (m) return 'ready: ' + m[1];
                         }
                         return 'not ready';
                     }
                 """)
+                logger.info(f"Duration check: {ready}")
                 if ready.startswith('ready'):
-                    logger.info(f"Audio duration {ready}")
+                    logger.info(f"Audio duration confirmed: {ready}")
                     break
-                if attempt % 6 == 0:
-                    logger.info(f"Duration status: {ready} (waiting...)")
                 time.sleep(5)
             except Exception:
                 time.sleep(5)
