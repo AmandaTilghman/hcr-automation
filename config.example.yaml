@@ -31,8 +31,10 @@ prx:
   # PRX Exchange login (exchange.prx.org)
   username: ""
   password: ""
-  # Optional: series ID to attach pieces to
-  series_id: ""
+  # Series to add pieces to (by name, as shown in PRX dropdown)
+  series_names:
+    - "Heather Cox Richardson - Letters From an American"
+    - "Heather Cox Richardson's Letters From An American (Subscribable)"
   # Producer name for pieces
   producer_name: "Lisa Adams"
   # Path to image file for pieces (relative to project dir)

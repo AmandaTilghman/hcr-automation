@@ -29,6 +29,7 @@ class PRXClient:
     """Browser-based PRX uploader using Playwright."""
 
     def __init__(self, config: dict):
+        self.config = config
         self.username = config["username"]
         self.password = config["password"]
         self.default_tags = config.get("default_tags", [])
@@ -274,19 +275,36 @@ class PRXClient:
             except Exception as e:
                 logger.warning(f"Could not find excerpt option: {e}")
 
-            # --- Add to series if configured ---
-            if self.series_id:
-                logger.info(f"Adding to series: {self.series_id}")
+            # --- Add to series ---
+            series_names = self.config.get("series_names", [])
+            if series_names or self.series_id:
+                logger.info("Adding piece to series...")
                 try:
+                    # Check the "Add this piece to a series" checkbox
                     series_checkbox = self.page.locator(
-                        'input[name*="series"], label:has-text("series")'
+                        'input[name*="series"], label:has-text("series"), '
+                        'label:has-text("Add this piece to a series")'
                     ).first
                     series_checkbox.click()
                     time.sleep(1)
-                    series_select = self.page.locator(
-                        'select[name*="series"]'
-                    ).first
-                    series_select.select_option(value=self.series_id)
+
+                    if series_names:
+                        # Select each series by visible text
+                        for name in series_names:
+                            logger.info(f"Selecting series: {name}")
+                            try:
+                                series_select = self.page.locator(
+                                    'select[name*="series"]'
+                                ).first
+                                series_select.select_option(label=name)
+                                time.sleep(0.5)
+                            except Exception as e:
+                                logger.warning(f"Could not select series '{name}': {e}")
+                    elif self.series_id:
+                        series_select = self.page.locator(
+                            'select[name*="series"]'
+                        ).first
+                        series_select.select_option(value=self.series_id)
                 except Exception as e:
                     logger.warning(f"Could not set series: {e}")
 
