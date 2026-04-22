@@ -1,0 +1,57 @@
+# Radio Automation Config
+# Copy this to config.yaml and fill in your values
+
+email:
+  imap_server: "imap.gmail.com"
+  imap_port: 993
+  username: "yourstation@gmail.com"
+  password: "your-app-password"        # Use Gmail App Password, not your real password
+  # Filter: only process emails matching these criteria
+  from_filter: ""                       # e.g. "notifications@theirservice.com"
+  subject_filter: ""                    # e.g. "New audio available"
+  processed_folder: "Processed"         # Move emails here after success
+
+ftp:
+  host: "ftp.example.com"
+  port: 21
+  username: "ftpuser"
+  password: "ftppassword"
+  remote_dir: "/audio/"                 # Directory to look for new files
+  filename_pattern: "*.wav"             # Glob pattern for audio files
+
+transcode:
+  input_format: "wav"
+  output_format: "mp2"
+  sample_rate: 44100
+  bitrate: "384k"                       # Common for broadcast MP2
+
+prx:
+  # OAuth2 credentials — register an app at id.prx.org
+  client_id: ""
+  client_secret: ""
+  # Your PRX account credentials
+  username: ""
+  password: ""
+  # Defaults for new pieces/stories
+  account_id: ""                        # Your PRX account ID
+  series_id: ""                         # Optional: series to attach stories to
+  default_tags: ["community-radio"]
+  default_description: ""
+  # Set to true to auto-publish (false = draft only)
+  auto_publish: false
+
+schedule:
+  # Polling window (Eastern Time)
+  start_hour: 11                        # 11 AM ET
+  end_hour: 20                          # 8 PM ET
+  check_interval_minutes: 15
+  timezone: "US/Eastern"
+
+logging:
+  level: "INFO"
+  file: "radio-automation.log"
+
+paths:
+  download_dir: "./downloads"
+  output_dir: "./output"
+  processed_log: "./processed.json"
