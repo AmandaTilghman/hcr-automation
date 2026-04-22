@@ -117,7 +117,7 @@ def download_audio(ftp_config: dict, download_dir: str) -> Path:
 
         # Download
         logger.info(f"Downloading: {target_file} ({target.st_size} bytes)")
-        sftp.get(f"{remote_dir}/{target_file}", str(local_path))
+        sftp.get(target_file, str(local_path))
 
         logger.info(f"Downloaded {local_path.stat().st_size} bytes → {local_path}")
         return local_path
