@@ -23,12 +23,12 @@ def extract_keywords(body: str) -> list:
     if not body:
         return []
 
-    # Match "Key Words" (case-insensitive) followed by the keyword list
+    # Match variations: "Key Words", "Keywords", "KEY WORDS", "key words", etc.
     # Keywords can be on the same line or the next line(s)
     match = re.search(
-        r'[Kk]ey\s*[Ww]ords?\s*[:\n]\s*(.+?)(?:\n\s*\n|\n\s*-|\Z)',
+        r'key\s*words?\s*[:\n]\s*(.+?)(?:\n\s*\n|\n\s*-|\Z)',
         body,
-        re.DOTALL
+        re.DOTALL | re.IGNORECASE
     )
 
     if not match:
