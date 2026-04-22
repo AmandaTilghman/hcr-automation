@@ -197,19 +197,20 @@ class PRXClient:
             except Exception as e:
                 logger.warning(f"Producer failed: {e}")
 
-        # Image — #add_images checkbox → #piece_image_uploaded_data file
-        #        → #piece_image_submit save button
+        # Image — the image upload section is visible by default
+        #        #add_images checkbox HIDES it ("I don't have an image")
+        #        So do NOT click the checkbox — just upload directly
         if self.image_path and Path(self.image_path).exists():
             logger.info(f"Uploading image: {self.image_path}")
             try:
-                # Check "I want to use an image" checkbox
+                # Make sure the checkbox is NOT checked (unchecked = image section visible)
                 self.page.evaluate("""
                     () => {
                         const cb = document.querySelector('#add_images');
-                        if (cb && !cb.checked) cb.click();
+                        if (cb && cb.checked) cb.click();
                     }
                 """)
-                time.sleep(2)
+                time.sleep(1)
 
                 # Upload image file
                 self.page.locator('#piece_image_uploaded_data').set_input_files(
