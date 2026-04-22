@@ -1,14 +1,13 @@
 """
 PRX Uploader (Browser Automation)
 ==================================
-Uses Playwright to automate the PRX Exchange upload workflow:
+Uses Playwright to automate the PRX Exchange multi-tab upload workflow:
   1. Log in to exchange.prx.org
-  2. Navigate to My PRX → Create New Piece
-  3. Upload audio file
-  4. Fill in title, description, tags, producer, image, pricing, permissions
-  5. Publish
+  2. Basics tab: series, title, description, content advisory
+  3. Details tab: producer, image, tags
+  4. Permissions tab: pricing, license terms, edit/excerpt
+  5. Publish tab: publish the piece
 
-This is a fallback approach until PRX provides OAuth API credentials.
 Requires: playwright (pip install playwright && playwright install chromium)
 """
 
@@ -33,9 +32,8 @@ class PRXClient:
         self.username = config["username"]
         self.password = config["password"]
         self.default_tags = config.get("default_tags", [])
-        self.default_description = config.get("default_description", "")
-        self.series_id = config.get("series_id", "")
-        self.auto_publish = config.get("auto_publish", False)
+        self.series_names = config.get("series_names", [])
+        self.auto_publish = config.get("auto_publish", True)
         self.headless = config.get("headless", True)
         self.producer_name = config.get("producer_name", "")
         self.image_path = config.get("image_path", "")
@@ -52,26 +50,22 @@ class PRXClient:
         context = self.browser.new_context()
         self.page = context.new_page()
 
-        # Navigate to login
         self.page.goto(PRX_LOGIN_URL, wait_until="networkidle")
         self.page.wait_for_load_state("networkidle")
 
         try:
-            # Look for email/username field
             email_field = self.page.locator(
                 'input[name="login"], input[name="email"], '
                 'input[type="email"], input[name="user[login]"]'
             ).first
             email_field.fill(self.username)
 
-            # Look for password field
             password_field = self.page.locator(
                 'input[name="password"], input[type="password"], '
                 'input[name="user[password]"]'
             ).first
             password_field.fill(self.password)
 
-            # Submit
             submit_btn = self.page.locator(
                 'input[type="submit"], button[type="submit"], '
                 'button:has-text("Log in"), button:has-text("Sign in")'
@@ -85,7 +79,7 @@ class PRXClient:
             self.page.screenshot(path="prx-login-debug.png")
             raise RuntimeError(
                 "Could not find login form on PRX. "
-                "Screenshot saved to prx-login-debug.png for debugging."
+                "Screenshot saved to prx-login-debug.png"
             )
 
     def _close(self):
@@ -95,13 +89,33 @@ class PRXClient:
         if self.playwright:
             self.playwright.stop()
 
+    def _screenshot(self, name: str):
+        """Save a debug screenshot."""
+        path = f"prx-{name}.png"
+        try:
+            self.page.screenshot(path=path)
+            logger.info(f"Screenshot: {path}")
+        except Exception:
+            pass
+
+    def _click_save_and_continue(self):
+        """Click 'Save and Continue' to advance to the next tab."""
+        logger.info("Clicking Save and Continue...")
+        btn = self.page.locator(
+            'input[value*="Save and Continue"], '
+            'button:has-text("Save and Continue"), '
+            'input[value*="save and continue"]'
+        ).first
+        btn.click()
+        self.page.wait_for_load_state("networkidle")
+        time.sleep(2)
+
     def _extract_date_from_filename(self, filename: str) -> str:
         """
         Extract date from filename like '4999_HCR-LFA 04.22.26.wav'
         Returns formatted date string like 'April 22, 2026'
         """
         try:
-            # Find the date pattern MM.DD.YY
             import re
             match = re.search(r'(\d{2})\.(\d{2})\.(\d{2})', filename)
             if match:
@@ -110,9 +124,271 @@ class PRXClient:
                 return dt.strftime("%B %d, %Y")
         except Exception as e:
             logger.warning(f"Could not extract date from filename: {e}")
-
         return datetime.now().strftime("%B %d, %Y")
 
+    # =========================================================================
+    # TAB 1: BASICS
+    # =========================================================================
+    def _fill_basics_tab(self, audio_path: Path, title: str, description: str):
+        """Fill the Basics tab: upload audio, series, title, description."""
+        logger.info("=== BASICS TAB ===")
+
+        # --- Upload audio file ---
+        logger.info(f"Uploading audio: {audio_path.name}")
+        try:
+            file_input = self.page.locator('input[type="file"]').first
+            file_input.set_input_files(str(audio_path))
+            logger.info("Audio file selected, waiting for upload...")
+            time.sleep(5)
+
+            # Wait for upload to finish
+            try:
+                self.page.wait_for_selector(
+                    '.upload-progress, .uploading, .processing',
+                    state='hidden',
+                    timeout=300000,
+                )
+            except PlaywrightTimeout:
+                logger.warning("Upload progress indicator didn't clear — continuing")
+        except Exception as e:
+            logger.error(f"Audio upload failed: {e}")
+
+        # --- Add to series ---
+        if self.series_names:
+            logger.info("Adding to series...")
+            try:
+                # Click "Add this piece to a series" checkbox/label
+                series_label = self.page.locator('text=Add this piece to a series')
+                if series_label.count() > 0:
+                    series_label.first.click()
+                    time.sleep(2)
+                    self._screenshot("series-checkbox-clicked")
+
+                    # Select the first series from dropdown
+                    for name in self.series_names:
+                        logger.info(f"Selecting series: {name}")
+                        try:
+                            # Find the select dropdown that appeared
+                            selects = self.page.locator('select').all()
+                            for sel in selects:
+                                options_text = sel.inner_text()
+                                if any(n.lower() in options_text.lower()
+                                       for n in self.series_names):
+                                    sel.select_option(label=name)
+                                    time.sleep(1)
+                                    break
+                        except Exception as e:
+                            logger.warning(f"Could not select series '{name}': {e}")
+            except Exception as e:
+                logger.warning(f"Series selection failed: {e}")
+
+        # --- Title ---
+        logger.info(f"Setting title: {title}")
+        try:
+            title_field = self.page.locator(
+                'input[name*="title"], input#piece_title'
+            ).first
+            title_field.fill(title)
+        except Exception as e:
+            logger.warning(f"Could not set title: {e}")
+
+        # --- Short Description ---
+        logger.info("Setting short description...")
+        try:
+            desc_field = self.page.locator(
+                'textarea[name*="short_description"], '
+                'textarea[name*="description"]'
+            ).first
+            desc_field.fill(description[:200])
+        except Exception as e:
+            logger.warning(f"Could not set description: {e}")
+
+        # --- Content Advisory (sensitive language) ---
+        logger.info("Checking content advisory...")
+        try:
+            advisory_label = self.page.locator('text=Include content advisory')
+            if advisory_label.count() > 0:
+                advisory_label.first.click()
+                time.sleep(1)
+                # Select "Explicit" if available
+                explicit = self.page.locator(
+                    'label:has-text("Explicit"), input[value*="explicit"]'
+                )
+                if explicit.count() > 0:
+                    explicit.first.click()
+        except Exception as e:
+            logger.warning(f"Could not set content advisory: {e}")
+
+        self._screenshot("basics-filled")
+        self._click_save_and_continue()
+
+    # =========================================================================
+    # TAB 2: DETAILS
+    # =========================================================================
+    def _fill_details_tab(self, tags: list):
+        """Fill the Details tab: producer, image, tags."""
+        logger.info("=== DETAILS TAB ===")
+
+        # --- Producer ---
+        if self.producer_name:
+            logger.info(f"Adding producer: {self.producer_name}")
+            try:
+                producer_input = self.page.locator(
+                    'input[name*="producer"], input[placeholder*="producer" i], '
+                    'input[placeholder*="Producer"]'
+                ).first
+                producer_input.fill(self.producer_name)
+                time.sleep(0.5)
+
+                # Click "Add Producer" button
+                add_producer = self.page.locator(
+                    'button:has-text("Add Producer"), '
+                    'input[value*="Add Producer"], '
+                    'a:has-text("Add Producer")'
+                )
+                if add_producer.count() > 0:
+                    add_producer.first.click()
+                    time.sleep(1)
+            except Exception as e:
+                logger.warning(f"Could not add producer: {e}")
+
+        # --- Image ---
+        if self.image_path and Path(self.image_path).exists():
+            logger.info(f"Uploading image: {self.image_path}")
+            try:
+                # Find image file input
+                file_inputs = self.page.locator('input[type="file"]').all()
+                for inp in file_inputs:
+                    accept = inp.get_attribute("accept") or ""
+                    name = inp.get_attribute("name") or ""
+                    if "image" in accept.lower() or "image" in name.lower():
+                        inp.set_input_files(str(Path(self.image_path).resolve()))
+                        time.sleep(2)
+                        # Click Save Image if there's a button
+                        save_img = self.page.locator(
+                            'button:has-text("Save Image"), '
+                            'input[value*="Save Image"]'
+                        )
+                        if save_img.count() > 0:
+                            save_img.first.click()
+                            time.sleep(2)
+                        logger.info("Image uploaded.")
+                        break
+                else:
+                    # If no image-specific input, try the last file input
+                    if len(file_inputs) > 1:
+                        file_inputs[-1].set_input_files(
+                            str(Path(self.image_path).resolve())
+                        )
+                        time.sleep(2)
+            except Exception as e:
+                logger.warning(f"Could not upload image: {e}")
+
+        # --- Tags ---
+        if tags:
+            tag_string = ", ".join(tags)
+            logger.info(f"Setting tags: {tag_string}")
+            try:
+                # Look for the additional tags textarea/input
+                tags_input = self.page.locator(
+                    'textarea[name*="tag"], input[name*="tag"], '
+                    'textarea[placeholder*="tag" i], input[placeholder*="tag" i]'
+                )
+                # Try to find the "Additional Tags" or "Your Tags" field
+                additional = self.page.locator(
+                    'textarea[name*="user_tag"], input[name*="user_tag"], '
+                    'textarea[name*="additional"], input[name*="additional"]'
+                )
+                if additional.count() > 0:
+                    additional.first.fill(tag_string)
+                elif tags_input.count() > 0:
+                    tags_input.first.fill(tag_string)
+                time.sleep(0.5)
+
+                # Click "Save Your Tags" or "Add" button if present
+                save_tags = self.page.locator(
+                    'button:has-text("Save"), input[value*="Save Your Tags"], '
+                    'button:has-text("Add")'
+                )
+                if save_tags.count() > 0:
+                    save_tags.first.click()
+                    time.sleep(1)
+            except Exception as e:
+                logger.warning(f"Could not set tags: {e}")
+
+        self._screenshot("details-filled")
+        self._click_save_and_continue()
+
+    # =========================================================================
+    # TAB 3: PERMISSIONS
+    # =========================================================================
+    def _fill_permissions_tab(self):
+        """Fill the Permissions tab: pricing, license, edit/excerpt."""
+        logger.info("=== PERMISSIONS TAB ===")
+
+        # --- Pricing: keep default (0 points) ---
+        # The default is already "Default (0 points/min)" so we don't need
+        # to change it, but verify if needed
+        logger.info("Pricing: keeping default (0 points)")
+
+        # --- Webcast: "only with permission" ---
+        logger.info("Setting webcast to 'only with permission'...")
+        try:
+            permission_radio = self.page.locator(
+                'label:has-text("only with permission")'
+            )
+            # There may be multiple "only with permission" labels
+            # The first one should be for webcast
+            if permission_radio.count() > 0:
+                permission_radio.first.click()
+                time.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"Could not set webcast permission: {e}")
+
+        # --- Edit/excerpt: "never" ---
+        logger.info("Setting edit/excerpt to 'never'...")
+        try:
+            never_radio = self.page.locator('label:has-text("never")')
+            if never_radio.count() > 0:
+                never_radio.first.click()
+                time.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"Could not set edit/excerpt: {e}")
+
+        self._screenshot("permissions-filled")
+        self._click_save_and_continue()
+
+    # =========================================================================
+    # TAB 4: PUBLISH
+    # =========================================================================
+    def _publish(self) -> str:
+        """Click Publish on the Publish tab. Returns the piece URL."""
+        logger.info("=== PUBLISH TAB ===")
+
+        if self.auto_publish:
+            logger.info("Publishing piece...")
+            try:
+                publish_btn = self.page.locator(
+                    'input[value*="Publish"], button:has-text("Publish"), '
+                    'input[value*="Publish!"], a:has-text("Publish")'
+                ).first
+                publish_btn.click()
+                self.page.wait_for_load_state("networkidle")
+                time.sleep(3)
+                logger.info("Piece published!")
+            except Exception as e:
+                logger.warning(f"Could not click publish: {e}")
+        else:
+            logger.info("Auto-publish disabled — leaving as draft.")
+
+        piece_url = self.page.url
+        self._screenshot("published")
+        logger.info(f"Piece URL: {piece_url}")
+        return piece_url
+
+    # =========================================================================
+    # MAIN WORKFLOW
+    # =========================================================================
     def create_and_upload_story(
         self,
         audio_path: Path | str,
@@ -122,8 +398,8 @@ class PRXClient:
         publish: bool = False,
     ) -> str:
         """
-        Full workflow: create piece → upload audio → fill details → publish.
-        Returns the piece URL.
+        Full multi-tab workflow:
+        Basics → Details → Permissions → Publish
         """
         audio_path = Path(audio_path)
         all_tags = list(set((tags or []) + self.default_tags))
@@ -139,230 +415,22 @@ class PRXClient:
             self.page.goto(PRX_NEW_PIECE_URL, wait_until="networkidle")
             time.sleep(2)
 
-            # Take a screenshot to see the form
-            self.page.screenshot(path="prx-form-initial.png")
-            logger.info("Screenshot of initial form saved: prx-form-initial.png")
+            # Tab 1: Basics
+            self._fill_basics_tab(audio_path, piece_title, piece_description)
 
-            # --- Upload audio file ---
-            logger.info(f"Uploading audio: {audio_path.name}")
-            file_input = self.page.locator('input[type="file"]').first
-            file_input.set_input_files(str(audio_path))
+            # Tab 2: Details
+            self._fill_details_tab(all_tags)
 
-            logger.info("Waiting for upload to complete...")
-            time.sleep(5)
+            # Tab 3: Permissions
+            self._fill_permissions_tab()
 
-            try:
-                self.page.wait_for_selector(
-                    '.upload-progress, .uploading, .processing',
-                    state='hidden',
-                    timeout=300000,
-                )
-            except PlaywrightTimeout:
-                logger.warning("Upload progress indicator didn't clear — continuing")
-
-            # --- Fill in title ---
-            logger.info(f"Setting title: {piece_title}")
-            try:
-                title_field = self.page.locator(
-                    'input[name*="title"], input#piece_title, '
-                    'input[placeholder*="title" i]'
-                ).first
-                title_field.fill(piece_title)
-            except Exception as e:
-                logger.warning(f"Could not find title field: {e}")
-
-            # --- Fill in description ---
-            logger.info("Setting description...")
-            try:
-                desc_field = self.page.locator(
-                    'textarea[name*="description"], textarea#piece_description, '
-                    'textarea[placeholder*="description" i], '
-                    'textarea[name*="short_description"]'
-                ).first
-                desc_field.fill(piece_description)
-            except Exception as e:
-                logger.warning(f"Could not find description field: {e}")
-
-            # --- Fill in tags ---
-            if all_tags:
-                logger.info(f"Setting tags: {', '.join(all_tags)}")
-                try:
-                    tags_field = self.page.locator(
-                        'input[name*="tag"], input#piece_tags, '
-                        'input[placeholder*="tag" i]'
-                    ).first
-                    tags_field.fill(", ".join(all_tags))
-                except Exception as e:
-                    logger.warning(f"Could not find tags field: {e}")
-
-            # --- Set producer name ---
-            if self.producer_name:
-                logger.info(f"Setting producer: {self.producer_name}")
-                try:
-                    producer_field = self.page.locator(
-                        'input[name*="producer"], input[name*="credit"], '
-                        'input[placeholder*="producer" i]'
-                    ).first
-                    producer_field.fill(self.producer_name)
-                except Exception as e:
-                    logger.warning(f"Could not find producer field: {e}")
-
-            # --- Upload image ---
-            if self.image_path and Path(self.image_path).exists():
-                logger.info(f"Uploading image: {self.image_path}")
-                try:
-                    # Look for image upload input (usually second file input)
-                    image_inputs = self.page.locator('input[type="file"]').all()
-                    for inp in image_inputs:
-                        accept = inp.get_attribute("accept") or ""
-                        if "image" in accept or len(image_inputs) > 1:
-                            inp.set_input_files(self.image_path)
-                            logger.info("Image uploaded.")
-                            break
-                except Exception as e:
-                    logger.warning(f"Could not upload image: {e}")
-
-            # --- Set pricing: Free, 0 points ---
-            logger.info("Setting pricing to free (0 points)...")
-            try:
-                # Look for price/points field
-                price_field = self.page.locator(
-                    'input[name*="point"], input[name*="price"], '
-                    'input[name*="Point"], input#piece_point_level'
-                ).first
-                price_field.fill("0")
-            except Exception as e:
-                logger.warning(f"Could not find price field: {e}")
-
-            try:
-                # Look for "free" radio button or checkbox
-                free_option = self.page.locator(
-                    'input[value="free"], input[value="0"], '
-                    'label:has-text("Free"), label:has-text("free")'
-                ).first
-                free_option.click()
-            except Exception as e:
-                logger.warning(f"Could not find free pricing option: {e}")
-
-            # --- Set permissions: "Only with permission" ---
-            logger.info("Setting permissions...")
-            try:
-                permission_option = self.page.locator(
-                    'label:has-text("Only with permission"), '
-                    'input[value*="permission"]'
-                ).first
-                permission_option.click()
-            except Exception as e:
-                logger.warning(f"Could not find permission option: {e}")
-
-            # --- Station License Terms ---
-            try:
-                license_option = self.page.locator(
-                    'label:has-text("Station License Terms"), '
-                    'input[value*="station_license"]'
-                ).first
-                license_option.click()
-            except Exception as e:
-                logger.warning(f"Could not find license option: {e}")
-
-            # --- Never edit or excerpt ---
-            try:
-                excerpt_option = self.page.locator(
-                    'label:has-text("Never"), '
-                    'input[value*="never"]'
-                ).first
-                excerpt_option.click()
-            except Exception as e:
-                logger.warning(f"Could not find excerpt option: {e}")
-
-            # --- Add to series ---
-            series_names = self.config.get("series_names", [])
-            if series_names or self.series_id:
-                logger.info("Adding piece to series...")
-                try:
-                    # Click the "Add this piece to a series" checkbox
-                    checkbox = self.page.locator(
-                        'text=Add this piece to a series'
-                    )
-                    if checkbox.count() > 0:
-                        checkbox.first.click()
-                        time.sleep(2)
-                    else:
-                        # Try finding by input type
-                        checkbox = self.page.locator(
-                            'input[type="checkbox"][name*="series"], '
-                            'input[type="checkbox"][id*="series"]'
-                        ).first
-                        checkbox.check()
-                        time.sleep(2)
-
-                    # Take screenshot to see what appeared
-                    self.page.screenshot(path="prx-series-dropdown.png")
-                    logger.info("Screenshot after series checkbox: prx-series-dropdown.png")
-
-                    if series_names:
-                        for name in series_names:
-                            logger.info(f"Selecting series: {name}")
-                            try:
-                                series_select = self.page.locator('select').filter(
-                                    has=self.page.locator(f'option:has-text("{name}")')
-                                ).first
-                                series_select.select_option(label=name)
-                                time.sleep(1)
-                            except Exception as e:
-                                # Try clicking option text directly
-                                try:
-                                    self.page.locator(f'option:has-text("{name}")').first.click()
-                                except Exception:
-                                    logger.warning(f"Could not select series '{name}': {e}")
-
-                except Exception as e:
-                    logger.warning(f"Could not set series: {e}")
-
-            # Screenshot before submit
-            self.page.screenshot(path="prx-form-filled.png")
-            logger.info("Screenshot of filled form: prx-form-filled.png")
-
-            # --- Publish ---
-            if publish or self.auto_publish:
-                logger.info("Publishing piece...")
-                try:
-                    publish_btn = self.page.locator(
-                        'input[value*="Publish"], button:has-text("Publish"), '
-                        'input[name="commit"][value*="Publish"]'
-                    ).first
-                    publish_btn.click()
-                except Exception:
-                    logger.warning("No publish button found, trying save...")
-                    save_btn = self.page.locator(
-                        'input[type="submit"], button[type="submit"], '
-                        'input[value*="Save"], button:has-text("Save")'
-                    ).first
-                    save_btn.click()
-            else:
-                logger.info("Saving piece as draft...")
-                save_btn = self.page.locator(
-                    'input[type="submit"], button[type="submit"], '
-                    'input[value*="Save"], button:has-text("Save")'
-                ).first
-                save_btn.click()
-
-            self.page.wait_for_load_state("networkidle")
-
-            piece_url = self.page.url
-            logger.info(f"Piece saved: {piece_url}")
-
-            self.page.screenshot(path="prx-upload-complete.png")
-            logger.info("Screenshot saved: prx-upload-complete.png")
+            # Tab 4: Publish
+            piece_url = self._publish()
 
             return piece_url
 
         except Exception as e:
-            try:
-                self.page.screenshot(path="prx-upload-error.png")
-                logger.error("Error screenshot saved: prx-upload-error.png")
-            except Exception:
-                pass
+            self._screenshot("error")
             raise RuntimeError(f"PRX upload failed: {e}")
 
         finally:
