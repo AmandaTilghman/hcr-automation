@@ -280,31 +280,42 @@ class PRXClient:
             if series_names or self.series_id:
                 logger.info("Adding piece to series...")
                 try:
-                    # Check the "Add this piece to a series" checkbox
-                    series_checkbox = self.page.locator(
-                        'input[name*="series"], label:has-text("series"), '
-                        'label:has-text("Add this piece to a series")'
-                    ).first
-                    series_checkbox.click()
-                    time.sleep(1)
+                    # Click the "Add this piece to a series" checkbox
+                    checkbox = self.page.locator(
+                        'text=Add this piece to a series'
+                    )
+                    if checkbox.count() > 0:
+                        checkbox.first.click()
+                        time.sleep(2)
+                    else:
+                        # Try finding by input type
+                        checkbox = self.page.locator(
+                            'input[type="checkbox"][name*="series"], '
+                            'input[type="checkbox"][id*="series"]'
+                        ).first
+                        checkbox.check()
+                        time.sleep(2)
+
+                    # Take screenshot to see what appeared
+                    self.page.screenshot(path="prx-series-dropdown.png")
+                    logger.info("Screenshot after series checkbox: prx-series-dropdown.png")
 
                     if series_names:
-                        # Select each series by visible text
                         for name in series_names:
                             logger.info(f"Selecting series: {name}")
                             try:
-                                series_select = self.page.locator(
-                                    'select[name*="series"]'
+                                series_select = self.page.locator('select').filter(
+                                    has=self.page.locator(f'option:has-text("{name}")')
                                 ).first
                                 series_select.select_option(label=name)
-                                time.sleep(0.5)
+                                time.sleep(1)
                             except Exception as e:
-                                logger.warning(f"Could not select series '{name}': {e}")
-                    elif self.series_id:
-                        series_select = self.page.locator(
-                            'select[name*="series"]'
-                        ).first
-                        series_select.select_option(value=self.series_id)
+                                # Try clicking option text directly
+                                try:
+                                    self.page.locator(f'option:has-text("{name}")').first.click()
+                                except Exception:
+                                    logger.warning(f"Could not select series '{name}': {e}")
+
                 except Exception as e:
                     logger.warning(f"Could not set series: {e}")
 
