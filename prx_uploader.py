@@ -373,35 +373,12 @@ class PRXClient:
     def _publish(self) -> str:
         logger.info("=== PUBLISH TAB ===")
 
-        # Wait for audio processing — check page text for non-zero length
-        logger.info("Waiting for audio to be ready...")
-        for attempt in range(60):  # Up to 5 min
-            try:
-                # Simple check: get all text, look for any time like X:XX or XX:XX
-                page_text = self.page.evaluate("() => document.body.textContent")
-                
-                # Find all time patterns
-                import re
-                times = re.findall(r'\b(\d{1,2}:\d{2})\b', page_text)
-                non_zero = [t for t in times if t != '0:00' and t != '00:00']
-                
-                if non_zero:
-                    logger.info(f"Audio ready! Found duration: {non_zero[0]}")
-                    break
-                
-                if attempt % 3 == 0:
-                    logger.info(f"Waiting for duration... (attempt {attempt}, found times: {times})")
-                
-                # Reload every 30s to get fresh content
-                if attempt > 0 and attempt % 6 == 0:
-                    self.page.reload(wait_until="networkidle")
-                    time.sleep(2)
-                else:
-                    time.sleep(5)
-            except Exception:
-                time.sleep(5)
-        else:
-            logger.warning("Duration still 0:00 after 5 min — trying to publish anyway")
+        # Wait 30 seconds for audio processing to complete
+        logger.info("Waiting 30 seconds for audio processing...")
+        time.sleep(30)
+        # Reload to get fresh page state
+        self.page.reload(wait_until="networkidle")
+        time.sleep(3)
 
         if self.auto_publish:
             logger.info("Publishing piece...")
