@@ -378,8 +378,8 @@ class PRXClient:
         current_url = self.page.url
         for attempt in range(120):  # Up to 10 min
             try:
-                # Reload the page to get fresh status
-                if attempt > 0:
+                # Reload the page to get fresh status (only every 30s)
+                if attempt > 0 and attempt % 6 == 0:
                     self.page.reload(wait_until="networkidle")
                     time.sleep(2)
 
