@@ -2,6 +2,7 @@
 FTP Downloader
 ==============
 Connects to FTP server and downloads the latest WAV file.
+Supports LAN/WAN fallback — tries primary host first, then fallback.
 """
 
 import ftplib
@@ -12,27 +13,62 @@ from pathlib import Path
 logger = logging.getLogger("radio-automation.ftp")
 
 
+def _connect_ftp(host: str, port: int, username: str, password: str,
+                 timeout: int = 10) -> ftplib.FTP:
+    """Attempt to connect and login to an FTP server."""
+    logger.info(f"Trying FTP connection: {host}:{port}")
+    ftp = ftplib.FTP()
+    ftp.connect(host, port, timeout=timeout)
+    ftp.login(username, password)
+    logger.info(f"Connected to {host}")
+    return ftp
+
+
+def connect_with_fallback(ftp_config: dict) -> ftplib.FTP:
+    """
+    Try primary host first, fall back to secondary if it fails.
+    """
+    host = ftp_config["host"]
+    fallback = ftp_config.get("host_fallback", "")
+    port = ftp_config.get("port", 21)
+    username = ftp_config["username"]
+    password = ftp_config["password"]
+
+    # Try primary host
+    try:
+        return _connect_ftp(host, port, username, password)
+    except Exception as e:
+        logger.warning(f"Primary host {host} failed: {e}")
+
+    # Try fallback if configured
+    if fallback:
+        try:
+            return _connect_ftp(fallback, port, username, password)
+        except Exception as e:
+            logger.error(f"Fallback host {fallback} also failed: {e}")
+            raise ConnectionError(
+                f"Could not connect to FTP. "
+                f"Tried {host} and {fallback} — both failed."
+            )
+
+    raise ConnectionError(f"Could not connect to FTP at {host}")
+
+
 def download_audio(ftp_config: dict, download_dir: str) -> Path:
     """
-    Connect to FTP, find the newest matching audio file, download it.
+    Connect to FTP (with LAN/WAN fallback), find the newest matching
+    audio file, and download it.
     Returns the local path to the downloaded file.
 
     Raises Exception on failure.
     """
-    host = ftp_config["host"]
-    port = ftp_config.get("port", 21)
-    username = ftp_config["username"]
-    password = ftp_config["password"]
     remote_dir = ftp_config.get("remote_dir", "/")
     pattern = ftp_config.get("filename_pattern", "*.wav")
 
     download_path = Path(download_dir)
     download_path.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Connecting to FTP: {host}:{port}")
-    ftp = ftplib.FTP()
-    ftp.connect(host, port)
-    ftp.login(username, password)
+    ftp = connect_with_fallback(ftp_config)
 
     try:
         ftp.cwd(remote_dir)
