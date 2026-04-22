@@ -351,22 +351,21 @@ class PRXClient:
         # Save and Continue (saves permissions, may go to wrong tab)
         self._click_save_and_continue()
 
-        # Immediately navigate to the Publish tab
+        # Navigate directly to the Publish step via URL
         logger.info("Navigating to Publish tab...")
-        tab_result = self.page.evaluate("""
-            () => {
-                const steps = document.querySelectorAll('.create-piece-step a');
-                for (const a of steps) {
-                    if (a.textContent.trim() === 'Publish') {
-                        a.click();
-                        return 'clicked Publish tab';
-                    }
-                }
-                return 'no Publish tab found';
-            }
-        """)
-        logger.info(f"Tab navigation: {tab_result}")
-        time.sleep(5)
+        # Extract the piece slug from the current URL
+        current_url = self.page.url
+        # URL looks like: /pieces/616232-untitled-april-22-2026/edit...
+        import re
+        piece_match = re.search(r'/pieces/([^/]+)', current_url)
+        if piece_match:
+            piece_slug = piece_match.group(1)
+            publish_url = f"https://exchange.prx.org/pieces/{piece_slug}/edit?step=preview"
+            logger.info(f"Going to: {publish_url}")
+            self.page.goto(publish_url, wait_until="networkidle")
+            time.sleep(3)
+        else:
+            logger.warning(f"Could not extract piece slug from URL: {current_url}")
 
     # =========================================================================
     # TAB 4: PUBLISH
