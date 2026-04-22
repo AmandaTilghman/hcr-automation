@@ -157,28 +157,62 @@ class PRXClient:
         if self.series_names:
             logger.info("Adding to series...")
             try:
-                # Click "Add this piece to a series" checkbox/label
-                series_label = self.page.locator('text=Add this piece to a series')
-                if series_label.count() > 0:
-                    series_label.first.click()
+                # Find and click the checkbox input for series
+                # The checkbox may be hidden, so try multiple approaches
+                checkbox = self.page.locator('#piece_series_id_chk, input[id*="series"][type="checkbox"]')
+                if checkbox.count() > 0:
+                    checkbox.first.check(force=True)
                     time.sleep(2)
-                    self._screenshot("series-checkbox-clicked")
+                else:
+                    # Try clicking the label text
+                    self.page.locator('text=Add this piece to a series').first.click()
+                    time.sleep(2)
 
-                    # Select the first series from dropdown
+                self._screenshot("series-checkbox-clicked")
+
+                # Now select from the dropdown using JavaScript if it's hidden
+                series_select = self.page.locator('select#piece_series_id')
+                if series_select.count() > 0:
+                    # Make the select visible first via JS
+                    self.page.evaluate("""
+                        const sel = document.querySelector('#piece_series_id');
+                        if (sel) {
+                            sel.style.display = 'block';
+                            sel.style.visibility = 'visible';
+                            sel.closest('.hidden, [style*="display: none"]')
+                                ?.style?.removeProperty('display');
+                        }
+                    """)
+                    time.sleep(1)
+
+                    # Try selecting by label
                     for name in self.series_names:
                         logger.info(f"Selecting series: {name}")
                         try:
-                            # Find the select dropdown that appeared
-                            selects = self.page.locator('select').all()
-                            for sel in selects:
-                                options_text = sel.inner_text()
-                                if any(n.lower() in options_text.lower()
-                                       for n in self.series_names):
-                                    sel.select_option(label=name)
-                                    time.sleep(1)
-                                    break
-                        except Exception as e:
-                            logger.warning(f"Could not select series '{name}': {e}")
+                            series_select.select_option(label=name, force=True)
+                            time.sleep(1)
+                            logger.info(f"Selected series: {name}")
+                            break  # PRX likely only allows one series
+                        except Exception:
+                            # Try via JavaScript
+                            try:
+                                self.page.evaluate(f"""
+                                    const sel = document.querySelector('#piece_series_id');
+                                    const opts = Array.from(sel.options);
+                                    const match = opts.find(o =>
+                                        o.text.includes("{name.replace('"', '\\"')}")
+                                    );
+                                    if (match) {{
+                                        sel.value = match.value;
+                                        sel.dispatchEvent(new Event('change'));
+                                    }}
+                                """)
+                                logger.info(f"Selected series via JS: {name}")
+                                time.sleep(1)
+                                break
+                            except Exception as e2:
+                                logger.warning(f"Could not select series '{name}': {e2}")
+
             except Exception as e:
                 logger.warning(f"Series selection failed: {e}")
 
