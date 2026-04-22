@@ -369,16 +369,12 @@ class PRXClient:
                     () => {
                         const body = document.body.textContent || '';
                         if (body.includes('Still working on it')) return 'processing';
-                        if (body.includes('not yet published')) {
-                            const match = body.match(/([1-9]\\d*:\\d{2})/);
-                            if (match) return 'ready: ' + match[1];
-                            return 'waiting for duration';
-                        }
-                        return 'unknown';
+                        // If "Still working on it" is gone, we're ready
+                        return 'ready';
                     }
                 """)
-                if status.startswith('ready'):
-                    logger.info(f"Audio processing complete! Duration: {status}")
+                if status == 'ready':
+                    logger.info("Audio processing complete — ready to publish!")
                     break
                 if attempt % 3 == 0:
                     logger.info(f"Audio status: {status} (waiting, attempt {attempt}...)")
