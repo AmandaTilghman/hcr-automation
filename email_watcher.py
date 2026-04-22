@@ -116,7 +116,7 @@ def check_for_notification(email_config: dict) -> dict | None:
         date = msg["Date"] or ""
         message_id = msg["Message-ID"] or str(latest_id)
 
-        # Extract body preview
+        # Extract full body text (need enough to find keywords at the end)
         body_preview = ""
         if msg.is_multipart():
             for part in msg.walk():
@@ -124,13 +124,13 @@ def check_for_notification(email_config: dict) -> dict | None:
                     charset = part.get_content_charset() or "utf-8"
                     body_preview = part.get_payload(decode=True).decode(
                         charset, errors="replace"
-                    )[:500]
+                    )[:5000]
                     break
         else:
             charset = msg.get_content_charset() or "utf-8"
             body_preview = msg.get_payload(decode=True).decode(
                 charset, errors="replace"
-            )[:500]
+            )[:5000]
 
         # Ensure the "Processed" folder exists, then move the email there
         try:
