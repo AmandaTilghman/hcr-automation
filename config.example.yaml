@@ -12,9 +12,10 @@ email:
   processed_folder: "Processed"         # Move emails here after success
 
 sftp:
-  host: "199.192.90.28"                 # Primary host (WAN address)
-  host_fallback: ""                     # Fallback host (LAN address, if different)
-  port: 51407
+  host: "192.168.15.120"                # Primary host (LAN — tried first)
+  port: 22                              # LAN port (default SSH)
+  host_fallback: "199.192.90.28"        # Fallback host (WAN)
+  port_fallback: 51407                  # WAN port
   username: "rd"
   password: ""                          # SFTP password
   remote_dir: "/"                       # Directory to look for audio files

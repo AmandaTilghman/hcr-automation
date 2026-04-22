@@ -42,8 +42,9 @@ def connect_with_fallback(ftp_config: dict) -> tuple:
     Returns (SSHClient, SFTPClient) tuple.
     """
     host = ftp_config["host"]
-    fallback = ftp_config.get("host_fallback", "")
     port = ftp_config.get("port", 22)
+    fallback = ftp_config.get("host_fallback", "")
+    fallback_port = ftp_config.get("port_fallback", port)
     username = ftp_config["username"]
     password = ftp_config["password"]
 
@@ -51,17 +52,17 @@ def connect_with_fallback(ftp_config: dict) -> tuple:
     try:
         return _connect_sftp(host, port, username, password)
     except Exception as e:
-        logger.warning(f"Primary host {host} failed: {e}")
+        logger.warning(f"Primary host {host}:{port} failed: {e}")
 
     # Try fallback if configured
     if fallback:
         try:
-            return _connect_sftp(fallback, port, username, password)
+            return _connect_sftp(fallback, fallback_port, username, password)
         except Exception as e:
-            logger.error(f"Fallback host {fallback} also failed: {e}")
+            logger.error(f"Fallback host {fallback}:{fallback_port} also failed: {e}")
             raise ConnectionError(
                 f"Could not connect to SFTP. "
-                f"Tried {host} and {fallback} — both failed."
+                f"Tried {host}:{port} and {fallback}:{fallback_port} — both failed."
             )
 
     raise ConnectionError(f"Could not connect to SFTP at {host}")
