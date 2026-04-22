@@ -185,38 +185,6 @@ class PRXClient:
     def _fill_details_tab(self, tags: list):
         logger.info("=== DETAILS TAB ===")
 
-        # Wait for audio processing to complete (status != "Processing", duration != "0:00")
-        logger.info("Waiting for audio processing to complete...")
-        try:
-            for attempt in range(60):  # Wait up to 5 minutes (60 * 5s)
-                status = self.page.evaluate("""
-                    () => {
-                        const table = document.querySelector('.file-upload-table');
-                        if (!table) return {status: 'no table', duration: ''};
-                        const rows = table.querySelectorAll('tbody tr');
-                        for (const row of rows) {
-                            const cells = row.querySelectorAll('td');
-                            if (cells.length >= 2) {
-                                const statusText = cells[1]?.textContent?.trim() || '';
-                                return {status: statusText, text: row.textContent?.trim()};
-                            }
-                        }
-                        return {status: 'no rows', duration: ''};
-                    }
-                """)
-                logger.info(f"Audio status: {status}")
-                if 'complete' in str(status.get('status', '')).lower():
-                    logger.info("Audio processing complete!")
-                    break
-                if 'select a file' in str(status.get('text', '')).lower():
-                    logger.info("No audio file detected yet — continuing")
-                    break
-                time.sleep(5)
-            else:
-                logger.warning("Audio processing didn't complete in 5 min — continuing anyway")
-        except Exception as e:
-            logger.warning(f"Audio status check failed: {e}")
-
         # Producer — #producer_name input + "Add Producer" submit button
         if self.producer_name:
             logger.info(f"Adding producer: {self.producer_name}")
