@@ -1,0 +1,9 @@
+config.yaml
+*.log
+downloads/
+output/
+processed.json
+venv/
+__pycache__/
+*.pyc
+.env
