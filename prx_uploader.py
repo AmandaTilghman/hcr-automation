@@ -355,16 +355,21 @@ class PRXClient:
     def _publish(self) -> str:
         logger.info("=== PUBLISH TAB ===")
 
-        # Wait for audio processing — "Still working on it..." disappears when ready
+        # Wait for audio processing — reload page to check if "Still working on it..." is gone
         logger.info("Waiting for audio processing to complete...")
+        current_url = self.page.url
         for attempt in range(120):  # Up to 10 min
             try:
+                # Reload the page to get fresh status
+                if attempt > 0:
+                    self.page.reload(wait_until="networkidle")
+                    time.sleep(2)
+
                 status = self.page.evaluate("""
                     () => {
                         const body = document.body.textContent || '';
                         if (body.includes('Still working on it')) return 'processing';
                         if (body.includes('not yet published')) {
-                            // Check if duration is available (not 0:00)
                             const match = body.match(/([1-9]\\d*:\\d{2})/);
                             if (match) return 'ready: ' + match[1];
                             return 'waiting for duration';
@@ -375,8 +380,8 @@ class PRXClient:
                 if status.startswith('ready'):
                     logger.info(f"Audio processing complete! Duration: {status}")
                     break
-                if attempt % 6 == 0:
-                    logger.info(f"Audio status: {status} (waiting...)")
+                if attempt % 3 == 0:
+                    logger.info(f"Audio status: {status} (waiting, attempt {attempt}...)")
                 time.sleep(5)
             except Exception:
                 time.sleep(5)
