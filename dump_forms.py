@@ -1,4 +1,4 @@
-"""Quick dump of Details + Permissions tab HTML."""
+"""Quick dump of ALL tabs HTML - fills required fields to advance."""
 import time
 import yaml
 from playwright.sync_api import sync_playwright
@@ -24,32 +24,55 @@ print("Logged in.")
 page.goto("https://exchange.prx.org/pieces/new", wait_until="networkidle")
 time.sleep(2)
 
-# Skip Basics - just Save and Continue
-print("Skipping Basics...")
-page.locator('input[value*="Save and Continue"], button:has-text("Save and Continue")').first.click()
-page.wait_for_load_state("networkidle")
-time.sleep(2)
+# Fill required fields on Basics
+page.locator('#piece_title').fill("TEST DUMP - DELETE ME")
+page.locator('#piece_short_description').fill("Test")
+time.sleep(1)
 
-# DETAILS TAB - dump full page HTML
-print("\n=== DETAILS TAB ===")
+# Save Basics HTML
 html = page.content()
-with open('prx-details-full.html', 'w') as f:
+with open('prx-tab1-basics.html', 'w') as f:
     f.write(html)
-print("Saved full HTML to prx-details-full.html")
+print("Saved Basics HTML")
+
+# Click Save and Continue
+page.locator('input[value="Save and Continue"]').click()
+page.wait_for_load_state("networkidle")
+time.sleep(3)
+
+# DETAILS TAB
+print(f"\nNow on: {page.url}")
+html = page.content()
+with open('prx-tab2-details.html', 'w') as f:
+    f.write(html)
+print("Saved Details HTML")
 
 # Save and Continue to Permissions
-page.locator('input[value*="Save and Continue"], button:has-text("Save and Continue")').first.click()
+page.locator('input[value="Save and Continue"]').click()
 page.wait_for_load_state("networkidle")
-time.sleep(2)
+time.sleep(3)
 
-# PERMISSIONS TAB - dump full page HTML
-print("\n=== PERMISSIONS TAB ===")
+# PERMISSIONS TAB
+print(f"\nNow on: {page.url}")
 html = page.content()
-with open('prx-permissions-full.html', 'w') as f:
+with open('prx-tab3-permissions.html', 'w') as f:
     f.write(html)
-print("Saved full HTML to prx-permissions-full.html")
+print("Saved Permissions HTML")
 
-print("\nDone! Press Enter to close.")
-input()
+# Save and Continue to Publish
+page.locator('input[value="Save and Continue"]').click()
+page.wait_for_load_state("networkidle")
+time.sleep(3)
+
+# PUBLISH TAB
+print(f"\nNow on: {page.url}")
+html = page.content()
+with open('prx-tab4-publish.html', 'w') as f:
+    f.write(html)
+print("Saved Publish HTML")
+
+print("\nDone! DON'T publish - just close browser.")
+print("Then: git add prx-tab*.html && git commit -m 'tab dumps' && git push")
+input("Press Enter to close...")
 browser.close()
 pw.stop()
