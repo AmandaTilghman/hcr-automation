@@ -259,55 +259,40 @@ class PRXClient:
             except Exception as e:
                 logger.warning(f"Image upload failed: {e}")
 
-        # Tags — #piece_tag_list input + "Save Your Tags" button
-        # Note: must wait for page to settle after producer/image AJAX calls
+        # Tags — #piece_tag_list + submit form via AJAX (same as PRX does)
         if tags:
             tag_string = ", ".join(tags)
             logger.info(f"Setting tags: {tag_string}")
             try:
-                # Scroll to make sure the tags field is visible
-                self.page.evaluate("""
-                    () => {
-                        const el = document.querySelector('#piece_tag_list');
-                        if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
-                    }
-                """)
-                time.sleep(1)
-
-                # Fill using JS to be safe (Playwright fill can miss on AJAX-loaded forms)
-                self.page.evaluate("""
+                # Fill the field and submit the form the same way PRX does
+                result = self.page.evaluate("""
                     (tagStr) => {
-                        const el = document.querySelector('#piece_tag_list');
-                        if (el) {
-                            el.value = tagStr;
-                            el.dispatchEvent(new Event('input', {bubbles: true}));
-                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                        const input = document.querySelector('#piece_tag_list');
+                        if (!input) return 'input not found';
+                        input.value = tagStr;
+                        
+                        // Find and submit the form containing this input
+                        const form = input.closest('form');
+                        if (!form) return 'form not found';
+                        
+                        // Trigger the form's onsubmit (which does the AJAX call)
+                        if (form.onsubmit) {
+                            form.onsubmit();
+                            return 'submitted via onsubmit';
                         }
+                        
+                        // Fallback: submit normally
+                        form.submit();
+                        return 'submitted normally';
                     }
                 """, tag_string)
-                time.sleep(1)
-
-                # Click Save Your Tags via JS
-                self.page.evaluate("""
-                    () => {
-                        const btns = document.querySelectorAll('input[type="submit"]');
-                        for (const btn of btns) {
-                            if (btn.value === 'Save Your Tags') {
-                                btn.click();
-                                return 'clicked';
-                            }
-                        }
-                        return 'not found';
-                    }
-                """)
+                logger.info(f"Tags submit result: {result}")
                 time.sleep(3)
                 logger.info("Tags saved.")
             except Exception as e:
                 logger.warning(f"Tags failed: {e} — clearing and notifying")
                 try:
-                    self.page.locator('#piece_tag_list').fill("")
-                    time.sleep(1)
-                    self.page.locator('input[value="Save Your Tags"]').click()
+                    self.page.evaluate("() => { const el = document.querySelector('#piece_tag_list'); if (el) { el.value = ''; el.closest('form')?.onsubmit?.(); }}")
                     time.sleep(2)
                 except Exception:
                     pass
