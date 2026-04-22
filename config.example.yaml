@@ -11,13 +11,13 @@ email:
   subject_filter: ""                    # e.g. "New audio available"
   processed_folder: "Processed"         # Move emails here after success
 
-ftp:
-  host: "192.168.1.100"                 # Primary host (LAN address)
-  host_fallback: "ftp.example.com"      # Fallback host (WAN address)
-  port: 21
-  username: "ftpuser"
-  password: "ftppassword"
-  remote_dir: "/audio/"                 # Directory to look for new files
+sftp:
+  host: "199.192.90.28"                 # Primary host (WAN address)
+  host_fallback: ""                     # Fallback host (LAN address, if different)
+  port: 51407
+  username: "rd"
+  password: ""                          # SFTP password
+  remote_dir: "/"                       # Directory to look for audio files
   filename_pattern: "*.wav"             # Glob pattern for audio files
 
 transcode:

@@ -1,62 +1,75 @@
 """
-FTP Downloader
-==============
-Connects to FTP server and downloads the latest WAV file.
+SFTP Downloader
+===============
+Connects to SFTP server and downloads the latest WAV file.
 Supports LAN/WAN fallback — tries primary host first, then fallback.
 """
 
-import ftplib
 import fnmatch
 import logging
+import stat
 from pathlib import Path
 
-logger = logging.getLogger("radio-automation.ftp")
+import paramiko
+
+logger = logging.getLogger("radio-automation.sftp")
 
 
-def _connect_ftp(host: str, port: int, username: str, password: str,
-                 timeout: int = 10) -> ftplib.FTP:
-    """Attempt to connect and login to an FTP server."""
-    logger.info(f"Trying FTP connection: {host}:{port}")
-    ftp = ftplib.FTP()
-    ftp.connect(host, port, timeout=timeout)
-    ftp.login(username, password)
+def _connect_sftp(host: str, port: int, username: str, password: str,
+                  timeout: int = 10) -> tuple:
+    """
+    Attempt to connect to an SFTP server.
+    Returns (SSHClient, SFTPClient) tuple.
+    """
+    logger.info(f"Trying SFTP connection: {host}:{port}")
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(
+        hostname=host,
+        port=port,
+        username=username,
+        password=password,
+        timeout=timeout,
+    )
+    sftp = ssh.open_sftp()
     logger.info(f"Connected to {host}")
-    return ftp
+    return ssh, sftp
 
 
-def connect_with_fallback(ftp_config: dict) -> ftplib.FTP:
+def connect_with_fallback(ftp_config: dict) -> tuple:
     """
     Try primary host first, fall back to secondary if it fails.
+    Returns (SSHClient, SFTPClient) tuple.
     """
     host = ftp_config["host"]
     fallback = ftp_config.get("host_fallback", "")
-    port = ftp_config.get("port", 21)
+    port = ftp_config.get("port", 22)
     username = ftp_config["username"]
     password = ftp_config["password"]
 
     # Try primary host
     try:
-        return _connect_ftp(host, port, username, password)
+        return _connect_sftp(host, port, username, password)
     except Exception as e:
         logger.warning(f"Primary host {host} failed: {e}")
 
     # Try fallback if configured
     if fallback:
         try:
-            return _connect_ftp(fallback, port, username, password)
+            return _connect_sftp(fallback, port, username, password)
         except Exception as e:
             logger.error(f"Fallback host {fallback} also failed: {e}")
             raise ConnectionError(
-                f"Could not connect to FTP. "
+                f"Could not connect to SFTP. "
                 f"Tried {host} and {fallback} — both failed."
             )
 
-    raise ConnectionError(f"Could not connect to FTP at {host}")
+    raise ConnectionError(f"Could not connect to SFTP at {host}")
 
 
 def download_audio(ftp_config: dict, download_dir: str) -> Path:
     """
-    Connect to FTP (with LAN/WAN fallback), find the newest matching
+    Connect to SFTP (with LAN/WAN fallback), find the newest matching
     audio file, and download it.
     Returns the local path to the downloaded file.
 
@@ -68,66 +81,46 @@ def download_audio(ftp_config: dict, download_dir: str) -> Path:
     download_path = Path(download_dir)
     download_path.mkdir(parents=True, exist_ok=True)
 
-    ftp = connect_with_fallback(ftp_config)
+    ssh, sftp = connect_with_fallback(ftp_config)
 
     try:
-        ftp.cwd(remote_dir)
+        sftp.chdir(remote_dir)
         logger.debug(f"Changed to directory: {remote_dir}")
 
         # List files and filter by pattern
-        files = []
-        ftp.retrlines("LIST", lambda line: files.append(line))
-
+        entries = sftp.listdir_attr()
         matching_files = []
-        for line in files:
-            parts = line.split()
-            if not parts:
+        for entry in entries:
+            if stat.S_ISDIR(entry.st_mode):
                 continue
-            filename = parts[-1]
-            if fnmatch.fnmatch(filename.lower(), pattern.lower()):
-                matching_files.append({
-                    "name": filename,
-                    "line": line,
-                })
+            if fnmatch.fnmatch(entry.filename.lower(), pattern.lower()):
+                matching_files.append(entry)
 
         if not matching_files:
             raise FileNotFoundError(
                 f"No files matching '{pattern}' found in {remote_dir}"
             )
 
-        # Try to sort by modification time if available via MLSD
-        try:
-            mlsd_entries = list(ftp.mlsd(facts=["modify"]))
-            mlsd_matching = [
-                (name, facts.get("modify", ""))
-                for name, facts in mlsd_entries
-                if fnmatch.fnmatch(name.lower(), pattern.lower())
-            ]
-            if mlsd_matching:
-                mlsd_matching.sort(key=lambda x: x[1], reverse=True)
-                target_file = mlsd_matching[0][0]
-            else:
-                target_file = matching_files[-1]["name"]
-        except Exception:
-            # MLSD not supported, fall back to last file in listing
-            target_file = matching_files[-1]["name"]
+        # Sort by modification time — newest first
+        matching_files.sort(key=lambda e: e.st_mtime, reverse=True)
+        target = matching_files[0]
+        target_file = target.filename
 
         local_path = download_path / target_file
 
-        # Skip if already downloaded
+        # Skip if already downloaded and same size
         if local_path.exists():
-            remote_size = ftp.size(target_file)
-            if remote_size and local_path.stat().st_size == remote_size:
+            if local_path.stat().st_size == target.st_size:
                 logger.info(f"File already downloaded: {target_file}")
                 return local_path
 
         # Download
-        logger.info(f"Downloading: {target_file}")
-        with open(local_path, "wb") as f:
-            ftp.retrbinary(f"RETR {target_file}", f.write)
+        logger.info(f"Downloading: {target_file} ({target.st_size} bytes)")
+        sftp.get(f"{remote_dir}/{target_file}", str(local_path))
 
         logger.info(f"Downloaded {local_path.stat().st_size} bytes → {local_path}")
         return local_path
 
     finally:
-        ftp.quit()
+        sftp.close()
+        ssh.close()

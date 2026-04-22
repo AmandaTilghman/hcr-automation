@@ -98,7 +98,7 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
     logger.info("Connecting to FTP and downloading audio...")
     try:
         downloaded_file = download_audio(
-            config["ftp"],
+            config.get("sftp", config.get("ftp", {})),
             download_dir=paths["download_dir"]
         )
     except Exception as e:
