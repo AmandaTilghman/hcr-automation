@@ -176,6 +176,42 @@ class PRXClient:
         except Exception as e:
             logger.warning(f"Description failed: {e}")
 
+        # Wait for audio processing to complete before saving
+        logger.info("Waiting for audio processing to complete...")
+        for attempt in range(120):  # Up to 10 minutes (120 * 5s)
+            try:
+                status = self.page.evaluate("""
+                    () => {
+                        // Check the file upload table for status
+                        const table = document.querySelector('.file-upload-table');
+                        if (!table) return 'no table';
+                        const text = table.textContent || '';
+                        if (text.includes('Complete')) return 'complete';
+                        if (text.includes('Processing')) return 'processing';
+                        if (text.includes('Uploading')) return 'uploading';
+                        if (text.includes('Select a file')) return 'no file';
+                        // Also check progress bar
+                        const bar = document.querySelector('.file-upload-progress');
+                        if (bar && bar.style.display !== 'none') return 'uploading';
+                        return 'unknown: ' + text.substring(0, 200);
+                    }
+                """)
+                if status == 'complete':
+                    logger.info("Audio processing complete!")
+                    break
+                elif status == 'no file':
+                    logger.info("No audio file in table — continuing")
+                    break
+                else:
+                    if attempt % 6 == 0:  # Log every 30 seconds
+                        logger.info(f"Audio status: {status} (waiting...)")
+                    time.sleep(5)
+            except Exception as e:
+                logger.warning(f"Status check error: {e}")
+                time.sleep(5)
+        else:
+            logger.warning("Audio processing didn't complete in 10 min — continuing anyway")
+
         self._screenshot("basics-filled")
         self._click_save_and_continue()
 
