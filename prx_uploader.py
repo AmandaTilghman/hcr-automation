@@ -426,34 +426,66 @@ class PRXClient:
 
         if self.auto_publish:
             logger.info("Publishing piece...")
+
+            # Wait for publish button to appear (AJAX-loaded content)
+            for wait in range(10):
+                found = self.page.evaluate("""
+                    () => {
+                        const inputs = document.querySelectorAll('input[type="submit"]');
+                        for (const inp of inputs) {
+                            if (inp.value === 'Publish') return 'found';
+                        }
+                        // Also check for a publish link/button
+                        const links = document.querySelectorAll('a, button');
+                        for (const el of links) {
+                            const text = el.textContent.trim();
+                            if (text === 'Publish' && !el.closest('.create-piece-step')) {
+                                return 'found-link';
+                            }
+                            if (text === 'Publish!') return 'found-link';
+                        }
+                        return 'not found';
+                    }
+                """)
+                logger.info(f"Publish button search: {found}")
+                if found.startswith('found'):
+                    break
+                time.sleep(3)
+
             try:
-                # The Publish button is: input#piece_submit[value="Publish"]
-                self.page.locator('input#piece_submit[value="Publish"]').first.click(force=True)
-                logger.info("Clicked Publish button!")
+                result = self.page.evaluate("""
+                    () => {
+                        // Try input submit first
+                        const inputs = document.querySelectorAll('input[type="submit"]');
+                        for (const inp of inputs) {
+                            if (inp.value === 'Publish') {
+                                inp.click();
+                                return 'clicked input';
+                            }
+                        }
+                        // Try any non-nav Publish link/button
+                        const els = document.querySelectorAll('a, button');
+                        for (const el of els) {
+                            const text = el.textContent.trim();
+                            if ((text === 'Publish' || text === 'Publish!') && 
+                                !el.closest('.create-piece-step')) {
+                                el.click();
+                                return 'clicked ' + el.tagName + ': ' + text;
+                            }
+                        }
+                        return 'not found';
+                    }
+                """)
+                logger.info(f"Publish result: {result}")
                 time.sleep(5)
                 self.page.wait_for_load_state("networkidle")
                 time.sleep(2)
-                logger.info("Piece published!")
+                if result != 'not found':
+                    logger.info("Piece published!")
+                else:
+                    logger.warning("Could not find publish button")
             except Exception as e:
-                logger.warning(f"Publish click failed: {e}")
-                # Fallback: try via JS
-                try:
-                    result = self.page.evaluate("""
-                        () => {
-                            const inputs = document.querySelectorAll('input[type="submit"]');
-                            for (const inp of inputs) {
-                                if (inp.value === 'Publish') {
-                                    inp.click();
-                                    return 'clicked via JS';
-                                }
-                            }
-                            return 'not found';
-                        }
-                    """)
-                    logger.info(f"Publish JS fallback: {result}")
-                    time.sleep(5)
-                except Exception as e2:
-                    logger.warning(f"Publish JS fallback also failed: {e2}")
+                logger.warning(f"Publish failed: {e}")
         else:
             logger.info("Auto-publish disabled — leaving as draft.")
 
