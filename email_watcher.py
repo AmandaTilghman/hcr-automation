@@ -23,10 +23,9 @@ def extract_keywords(body: str) -> list:
     if not body:
         return []
 
-    # Match variations: "Key Words", "Keywords", "KEY WORDS", "key words", etc.
-    # Keywords can be on the same line or the next line(s)
+    # Match variations: "Key Words", "Keywords", "Tags", "TAGS", etc.
     match = re.search(
-        r'key\s*words?\s*[:\n]\s*(.+?)(?:\n\s*\n|\n\s*-|\Z)',
+        r'(?:key\s*words?|tags?)\s*[:\n]\s*(.+?)(?:\n\s*\n|\n\s*-|\Z)',
         body,
         re.DOTALL | re.IGNORECASE
     )
