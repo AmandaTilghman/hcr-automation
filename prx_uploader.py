@@ -348,17 +348,22 @@ class PRXClient:
 
         self._screenshot("permissions-filled")
 
-        # Save permissions first via Save and Continue
-        self._click_save_and_continue()
-        time.sleep(2)
+        # Save permissions via "Save and Exit" to avoid navigating away
+        logger.info("Saving permissions via Save and Exit...")
+        self.page.locator('input[value="Save and Exit"]').click()
+        self.page.wait_for_load_state("networkidle")
+        time.sleep(3)
 
-        # We might be on Preview tab now. Check if we need to navigate to Publish
-        # Use the tab navigation to go to the Publish/Preview tab
-        logger.info("Ensuring we're on the Publish tab...")
-        current_text = self.page.evaluate("() => document.body.textContent.substring(0, 500)")
-        logger.info(f"Current page content start: {current_text[:200]}")
-        
-        # If we're not on publish, click the Publish tab via nav
+        # Now we're on the piece view page. Go back to edit and click Publish tab
+        logger.info("Navigating to Publish tab...")
+        # Get the piece URL and navigate to edit
+        piece_url = self.page.url
+        if '/edit' not in piece_url:
+            edit_url = piece_url.rstrip('/') + '/edit'
+            self.page.goto(edit_url, wait_until="networkidle")
+            time.sleep(2)
+
+        # Click the Publish tab
         tab_result = self.page.evaluate("""
             () => {
                 const steps = document.querySelectorAll('.create-piece-step a');
