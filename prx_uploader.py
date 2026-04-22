@@ -370,52 +370,33 @@ class PRXClient:
     def _publish(self) -> str:
         logger.info("=== PUBLISH TAB ===")
 
-        # Wait for audio duration to not be 0:00
-        logger.info("Waiting for audio duration to be ready...")
-        for attempt in range(60):  # Up to 5 min
+        # Wait for audio processing — "Still working on it..." disappears when ready
+        logger.info("Waiting for audio processing to complete...")
+        for attempt in range(120):  # Up to 10 min
             try:
-                ready = self.page.evaluate("""
+                status = self.page.evaluate("""
                     () => {
-                        // Look specifically in the audio file table or piece info
-                        const tables = document.querySelectorAll('table');
-                        for (const table of tables) {
-                            const text = table.textContent || '';
-                            const match = text.match(/(\\d+):(\\d{2})/g);
-                            if (match) {
-                                for (const m of match) {
-                                    if (m !== '0:00' && m !== '00:00') return 'ready: ' + m;
-                                }
-                            }
-                        }
-                        // Also check any element with duration/length/time class
-                        const els = document.querySelectorAll(
-                            '.duration, .length, .time, td'
-                        );
-                        for (const el of els) {
-                            const text = el.textContent.trim();
-                            const match = text.match(/^(\\d+):(\\d{2})$/);
-                            if (match && text !== '0:00' && text !== '00:00') {
-                                return 'ready: ' + text;
-                            }
-                        }
-                        // Last resort: check full page but be more specific
                         const body = document.body.textContent || '';
-                        if (body.includes('Complete') && body.match(/[1-9]\\d*:\\d{2}/)) {
-                            const m = body.match(/([1-9]\\d*:\\d{2})/);
-                            if (m) return 'ready: ' + m[1];
+                        if (body.includes('Still working on it')) return 'processing';
+                        if (body.includes('not yet published')) {
+                            // Check if duration is available (not 0:00)
+                            const match = body.match(/([1-9]\\d*:\\d{2})/);
+                            if (match) return 'ready: ' + match[1];
+                            return 'waiting for duration';
                         }
-                        return 'not ready';
+                        return 'unknown';
                     }
                 """)
-                logger.info(f"Duration check: {ready}")
-                if ready.startswith('ready'):
-                    logger.info(f"Audio duration confirmed: {ready}")
+                if status.startswith('ready'):
+                    logger.info(f"Audio processing complete! Duration: {status}")
                     break
+                if attempt % 6 == 0:
+                    logger.info(f"Audio status: {status} (waiting...)")
                 time.sleep(5)
             except Exception:
                 time.sleep(5)
         else:
-            logger.warning("Duration still 0:00 after 5 min — publishing anyway")
+            logger.warning("Audio processing didn't complete in 10 min — trying to publish anyway")
 
         if self.auto_publish:
             logger.info("Publishing piece...")
