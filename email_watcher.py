@@ -15,6 +15,36 @@ import re
 logger = logging.getLogger("radio-automation.email")
 
 
+def detect_explicit_content(body: str) -> bool:
+    """
+    Scan the email body for mentions of explicit content that would
+    trigger PRX's content advisory checkbox.
+    """
+    if not body:
+        return False
+
+    explicit_patterns = [
+        r'\bexplicit\s+content\b',
+        r'\bexplicit\s+language\b',
+        r'\bstrong\s+language\b',
+        r'\badult\s+content\b',
+        r'\bcontent\s+advisory\b',
+        r'\bexplicit\s+material\b',
+        r'\bmature\s+content\b',
+        r'\bprofanity\b',
+        r'\bvulgar(?:ity)?\b',
+        r'\bgraphic\s+(?:content|description|violence)\b',
+    ]
+
+    body_lower = body.lower()
+    for pattern in explicit_patterns:
+        if re.search(pattern, body_lower):
+            logger.info(f"Explicit content detected (matched: {pattern})")
+            return True
+
+    return False
+
+
 def extract_keywords(body: str) -> list:
     """
     Extract keywords from the email body.
@@ -147,6 +177,9 @@ def check_for_notification(email_config: dict) -> dict | None:
         # Extract keywords/tags from body
         tags = extract_keywords(body_preview)
 
+        # Check for explicit content mentions
+        has_explicit = detect_explicit_content(body_preview)
+
         return {
             "email_id": message_id,
             "subject": subject,
@@ -154,6 +187,7 @@ def check_for_notification(email_config: dict) -> dict | None:
             "date": date,
             "body_preview": body_preview.strip(),
             "tags": tags,
+            "has_explicit_content": has_explicit,
         }
 
     except imaplib.IMAP4.error as e:

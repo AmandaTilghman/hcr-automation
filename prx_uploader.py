@@ -130,7 +130,8 @@ class PRXClient:
     # =========================================================================
     # TAB 1: BASICS
     # =========================================================================
-    def _fill_basics_tab(self, audio_path: Path, title: str, description: str):
+    def _fill_basics_tab(self, audio_path: Path, title: str, description: str,
+                        content_advisory: bool = False, series_override: str = None):
         logger.info("=== BASICS TAB ===")
 
         # Upload audio — input#evaporate_files accepts .mp2
@@ -150,7 +151,8 @@ class PRXClient:
             logger.error(f"Audio upload failed: {e}")
 
         # Series — checkbox #add_to_series toggles #select_series
-        if self.series_names:
+        series_name = series_override or (self.series_names[0] if self.series_names else None)
+        if series_name:
             logger.info("Adding to series...")
             try:
                 # Click the checkbox via JS (it uses onclick to toggle)
@@ -165,7 +167,7 @@ class PRXClient:
                 time.sleep(2)
 
                 # Select series from #piece_series_id
-                name = self.series_names[0]
+                name = series_name
                 logger.info(f"Selecting series: {name}")
                 self.page.evaluate("""
                     (name) => {
@@ -206,9 +208,47 @@ class PRXClient:
         except Exception as e:
             logger.warning(f"Description failed: {e}")
 
-        # Content Advisory — skip for now, can be set manually
-        # The dynamic checkbox/radio interaction is unreliable in automation
-        logger.info("Skipping content advisory (set manually if needed).")
+        # Content Advisory — check if email flagged explicit content
+        if content_advisory:
+            logger.info("Explicit content detected — setting content advisory...")
+            try:
+                result = self.page.evaluate("""
+                    () => {
+                        // Look for the content advisory checkbox/radio
+                        const selectors = [
+                            '#piece_content_advisory',
+                            'input[name*="content_advisory"]',
+                            'input[name*="explicit"]',
+                            '#content_advisory',
+                        ];
+                        for (const sel of selectors) {
+                            const el = document.querySelector(sel);
+                            if (el && !el.checked) {
+                                el.click();
+                                return 'checked: ' + sel;
+                            }
+                        }
+                        // Fallback: look for any checkbox/label mentioning "content advisory"
+                        const labels = document.querySelectorAll('label');
+                        for (const lbl of labels) {
+                            if (lbl.textContent.toLowerCase().includes('content advisory')) {
+                                const input = lbl.querySelector('input') ||
+                                              document.getElementById(lbl.htmlFor);
+                                if (input && !input.checked) {
+                                    input.click();
+                                    return 'checked via label';
+                                }
+                            }
+                        }
+                        return 'not found';
+                    }
+                """)
+                logger.info(f"Content advisory result: {result}")
+                time.sleep(1)
+            except Exception as e:
+                logger.warning(f"Content advisory failed: {e}")
+        else:
+            logger.info("No explicit content — skipping content advisory.")
 
         self._screenshot("basics-filled")
         self._click_save_and_continue()
@@ -460,6 +500,8 @@ class PRXClient:
         description: str = "",
         tags: list = None,
         publish: bool = False,
+        content_advisory: bool = False,
+        series_override: str = None,
     ) -> str:
         audio_path = Path(audio_path)
         all_tags = list(set((tags or []) + self.default_tags))
@@ -473,7 +515,9 @@ class PRXClient:
             self.page.goto(PRX_NEW_PIECE_URL, wait_until="networkidle")
             time.sleep(2)
 
-            self._fill_basics_tab(audio_path, piece_title, piece_description)
+            self._fill_basics_tab(audio_path, piece_title, piece_description,
+                                  content_advisory=content_advisory,
+                                  series_override=series_override)
             self._fill_details_tab(all_tags)
             self._fill_permissions_tab()
             return self._publish()

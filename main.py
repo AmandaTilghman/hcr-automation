@@ -121,34 +121,50 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
 
     logger.info(f"Transcoded: {output_file}")
 
-    # --- Step 4: Upload to PRX ---
-    logger.info("Uploading to PRX...")
-    try:
-        prx = PRXClient(config["prx"])
-        prx.authenticate()
+    # --- Step 4: Upload to PRX (one piece per series) ---
+    series_list = config["prx"].get("series_names", [])
+    if not series_list:
+        series_list = [None]  # Upload once with no series
 
-        # Extract metadata from email/filename
-        metadata = extract_metadata(notification, downloaded_file)
+    metadata = extract_metadata(notification, downloaded_file)
+    has_explicit = notification.get("has_explicit_content", False)
+    story_urls = []
 
-        story_url = prx.create_and_upload_story(
-            audio_path=output_file,
-            title=metadata["title"],
-            description=metadata.get("description", ""),
-            tags=metadata.get("tags", []),
-            publish=config["prx"].get("auto_publish", False)
-        )
-    except Exception as e:
-        logger.error(f"PRX upload failed: {e}")
+    for i, series_name in enumerate(series_list):
+        label = series_name or "no series"
+        logger.info(f"Uploading to PRX [{i+1}/{len(series_list)}]: {label}")
+        try:
+            prx = PRXClient(config["prx"])
+            prx.authenticate()
+
+            story_url = prx.create_and_upload_story(
+                audio_path=output_file,
+                title=metadata["title"],
+                description=metadata.get("description", ""),
+                tags=metadata.get("tags", []),
+                publish=config["prx"].get("auto_publish", False),
+                content_advisory=has_explicit,
+                series_override=series_name,
+            )
+            story_urls.append(story_url)
+            logger.info(f"Published to PRX ({label}): {story_url}")
+        except Exception as e:
+            logger.error(f"PRX upload failed for {label}: {e}")
+            continue
+
+    if not story_urls:
+        logger.error("All PRX uploads failed.")
         return False
 
-    logger.info(f"Published to PRX: {story_url}")
+    logger.info(f"Published {len(story_urls)}/{len(series_list)} pieces to PRX.")
 
     # --- Step 5: Mark as processed ---
     state.mark_processed(email_id, {
         "subject": notification["subject"],
         "downloaded_file": str(downloaded_file),
         "output_file": str(output_file),
-        "prx_url": story_url,
+        "prx_urls": story_urls,
+        "content_advisory": has_explicit,
         "processed_at": datetime.utcnow().isoformat()
     })
 

@@ -46,7 +46,7 @@ prx:
   auto_publish: true
   # Run browser visibly (false) or hidden (true)
   # Set to false for debugging so you can watch what it does
-  headless: false
+  headless: true
 
 schedule:
   # Polling window (Eastern Time)
