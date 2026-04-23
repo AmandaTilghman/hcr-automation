@@ -252,7 +252,7 @@ class PRXClient:
                 logger.warning(f"Episode identifier failed: {e}")
 
             # Episode Date — directly below episode identifier, set to today's date
-            today_str = datetime.now().strftime("%m/%d/%Y")
+            today_str = datetime.now().strftime("%Y-%m-%d")
             logger.info(f"Setting episode date: {today_str}")
             try:
                 result = self.page.evaluate("""
