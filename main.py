@@ -130,9 +130,20 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
     has_explicit = notification.get("has_explicit_content", False)
     story_urls = []
 
+    # Episode numbering — only for subscribable series
+    episode_number = config["prx"].get("episode_number")
+    subscribable_keyword = "subscribable"
+
     for i, series_name in enumerate(series_list):
         label = series_name or "no series"
         logger.info(f"Uploading to PRX [{i+1}/{len(series_list)}]: {label}")
+
+        # Only pass episode number for the subscribable series
+        ep_num = None
+        if episode_number and series_name and subscribable_keyword.lower() in series_name.lower():
+            ep_num = episode_number
+            logger.info(f"Episode number for this series: {ep_num}")
+
         try:
             prx = PRXClient(config["prx"])
             prx.authenticate()
@@ -145,9 +156,15 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
                 publish=config["prx"].get("auto_publish", False),
                 content_advisory=has_explicit,
                 series_override=series_name,
+                episode_number=ep_num,
             )
             story_urls.append(story_url)
             logger.info(f"Published to PRX ({label}): {story_url}")
+
+            # Increment episode number after successful subscribable upload
+            if ep_num is not None:
+                _increment_episode_number(config, logger)
+
         except Exception as e:
             logger.error(f"PRX upload failed for {label}: {e}")
             continue
@@ -170,6 +187,41 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
 
     logger.info("Pipeline complete!")
     return True
+
+
+def _increment_episode_number(config: dict, logger: logging.Logger):
+    """
+    Increment the episode number in config.yaml after a successful upload.
+    Handles year rollover based on episode_year_starts mapping.
+    """
+    import yaml
+
+    try:
+        config_path = Path("config.yaml")
+        with open(config_path) as f:
+            raw_config = yaml.safe_load(f)
+
+        current = raw_config["prx"]["episode_number"]
+        year_starts = raw_config["prx"].get("episode_year_starts", {})
+
+        # Check if next year has a reset number
+        current_year = datetime.now().year
+        next_year = current_year + 1
+        next_num = current + 1
+
+        # If we're in Jan and there's a year start for this year, use it
+        # (handles the case where the year rolled over since last run)
+        if current_year in year_starts and current < year_starts[current_year]:
+            next_num = year_starts[current_year]
+            logger.info(f"Year rollover detected — resetting to {next_num}")
+
+        raw_config["prx"]["episode_number"] = next_num
+        with open(config_path, "w") as f:
+            yaml.dump(raw_config, f, default_flow_style=False, sort_keys=False)
+
+        logger.info(f"Episode number incremented: {current} → {next_num}")
+    except Exception as e:
+        logger.error(f"Failed to increment episode number: {e}")
 
 
 def extract_metadata(notification: dict, audio_path: Path) -> dict:

@@ -131,7 +131,8 @@ class PRXClient:
     # TAB 1: BASICS
     # =========================================================================
     def _fill_basics_tab(self, audio_path: Path, title: str, description: str,
-                        content_advisory: bool = False, series_override: str = None):
+                        content_advisory: bool = False, series_override: str = None,
+                        episode_number: int = None):
         logger.info("=== BASICS TAB ===")
 
         # Upload audio — input#evaporate_files accepts .mp2
@@ -190,9 +191,56 @@ class PRXClient:
                     }
                 """, name)
                 logger.info(f"Selected series: {name}")
-                time.sleep(1)
+                time.sleep(3)  # Wait for dynamic fields to load after series change
             except Exception as e:
                 logger.warning(f"Series failed: {e}")
+
+        # Episode Identifier — appears dynamically for subscribable series
+        if episode_number is not None:
+            logger.info(f"Setting episode identifier: {episode_number}")
+            try:
+                result = self.page.evaluate("""
+                    (epNum) => {
+                        // Try common selectors for episode identifier field
+                        const selectors = [
+                            'input[name*="episode_identifier"]',
+                            'input[name*="episode_number"]',
+                            '#piece_episode_identifier',
+                            '#piece_episode_number',
+                            '#episode_identifier',
+                        ];
+                        for (const sel of selectors) {
+                            const el = document.querySelector(sel);
+                            if (el) {
+                                el.value = epNum;
+                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                                el.dispatchEvent(new Event('change', {bubbles: true}));
+                                return 'filled: ' + sel;
+                            }
+                        }
+                        // Fallback: find by label text
+                        const labels = document.querySelectorAll('label');
+                        for (const lbl of labels) {
+                            const text = lbl.textContent.toLowerCase();
+                            if (text.includes('episode') && (text.includes('identifier') || text.includes('number'))) {
+                                const input = document.getElementById(lbl.htmlFor) ||
+                                              lbl.querySelector('input') ||
+                                              lbl.closest('.form-row')?.querySelector('input[type="text"], input[type="number"]');
+                                if (input) {
+                                    input.value = epNum;
+                                    input.dispatchEvent(new Event('input', {bubbles: true}));
+                                    input.dispatchEvent(new Event('change', {bubbles: true}));
+                                    return 'filled via label: ' + input.id;
+                                }
+                            }
+                        }
+                        return 'not found';
+                    }
+                """, str(episode_number))
+                logger.info(f"Episode identifier result: {result}")
+                time.sleep(1)
+            except Exception as e:
+                logger.warning(f"Episode identifier failed: {e}")
 
         # Title — #piece_title
         logger.info(f"Setting title: {title}")
@@ -523,6 +571,7 @@ class PRXClient:
         publish: bool = False,
         content_advisory: bool = False,
         series_override: str = None,
+        episode_number: int = None,
     ) -> str:
         audio_path = Path(audio_path)
         all_tags = list(set((tags or []) + self.default_tags))
@@ -538,7 +587,8 @@ class PRXClient:
 
             self._fill_basics_tab(audio_path, piece_title, piece_description,
                                   content_advisory=content_advisory,
-                                  series_override=series_override)
+                                  series_override=series_override,
+                                  episode_number=episode_number)
             self._fill_details_tab(all_tags)
             self._fill_permissions_tab()
             return self._publish()
