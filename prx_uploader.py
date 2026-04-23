@@ -368,23 +368,44 @@ class PRXClient:
         # Pricing — #piece_point_level select, keep default (0 points)
         logger.info("Pricing: keeping default (0 points)")
 
-        # Webcast — #license_website_usage_only_with_permission radio
-        logger.info("Setting webcast to 'only with permission'...")
+        # Embedding — #piece_is_shareable checkbox (checked by default)
+        # Uncheck it to disable embedding/streaming on other sites
+        logger.info("Unchecking embedding...")
         try:
-            self.page.locator('#license_website_usage_only_with_permission').click(force=True)
+            self.page.evaluate("""
+                () => {
+                    const cb = document.querySelector('#piece_is_shareable');
+                    if (cb && cb.checked) {
+                        cb.click();
+                        return 'unchecked';
+                    }
+                    return cb ? 'already unchecked' : 'not found';
+                }
+            """)
             time.sleep(1)
-            logger.info("Webcast permission set.")
+            logger.info("Embedding unchecked.")
         except Exception as e:
-            logger.warning(f"Webcast permission failed: {e}")
+            logger.warning(f"Embedding uncheck failed: {e}")
 
-        # Edit/excerpt — #license_allow_edit_never radio
-        logger.info("Setting edit/excerpt to 'never'...")
+        # Webcast and Edit/excerpt — these fields may not be present on all
+        # piece types. Try them but don't fail if missing.
         try:
-            self.page.locator('#license_allow_edit_never').click(force=True)
-            time.sleep(1)
-            logger.info("Edit/excerpt set to never.")
+            webcast = self.page.locator('#license_website_usage_only_with_permission')
+            if webcast.count() > 0:
+                logger.info("Setting webcast to 'only with permission'...")
+                webcast.click(force=True)
+                time.sleep(1)
         except Exception as e:
-            logger.warning(f"Edit/excerpt failed: {e}")
+            logger.info(f"Webcast field not present — skipping ({e})")
+
+        try:
+            edit_excerpt = self.page.locator('#license_allow_edit_never')
+            if edit_excerpt.count() > 0:
+                logger.info("Setting edit/excerpt to 'never'...")
+                edit_excerpt.click(force=True)
+                time.sleep(1)
+        except Exception as e:
+            logger.info(f"Edit/excerpt field not present — skipping ({e})")
 
         self._screenshot("permissions-filled")
 
