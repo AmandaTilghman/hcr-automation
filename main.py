@@ -135,6 +135,12 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
     subscribable_keyword = "subscribable"
 
     for i, series_name in enumerate(series_list):
+        # Wait between uploads to ensure Playwright fully shuts down
+        if i > 0:
+            logger.info("Waiting 5 seconds before next upload...")
+            import time
+            time.sleep(5)
+
         label = series_name or "no series"
         logger.info(f"Uploading to PRX [{i+1}/{len(series_list)}]: {label}")
 

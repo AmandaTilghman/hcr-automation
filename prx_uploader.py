@@ -67,10 +67,19 @@ class PRXClient:
             raise RuntimeError("Could not find login form on PRX.")
 
     def _close(self):
-        if self.browser:
-            self.browser.close()
-        if self.playwright:
-            self.playwright.stop()
+        try:
+            if self.browser:
+                self.browser.close()
+                self.browser = None
+        except Exception as e:
+            logger.warning(f"Browser close error: {e}")
+        try:
+            if self.playwright:
+                self.playwright.stop()
+                self.playwright = None
+        except Exception as e:
+            logger.warning(f"Playwright stop error: {e}")
+        self.page = None
 
     def _send_tag_failure_email(self, tags: str, error: str):
         """Send notification to Amanda that tags didn't work."""
