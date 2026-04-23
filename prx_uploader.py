@@ -242,6 +242,62 @@ class PRXClient:
             except Exception as e:
                 logger.warning(f"Episode identifier failed: {e}")
 
+            # Episode Date — directly below episode identifier, set to today's date
+            today_str = datetime.now().strftime("%m/%d/%Y")
+            logger.info(f"Setting episode date: {today_str}")
+            try:
+                result = self.page.evaluate("""
+                    (dateStr) => {
+                        const selectors = [
+                            'input[name*="episode_date"]',
+                            'input[name*="release_date"]',
+                            '#piece_episode_date',
+                            '#piece_release_date',
+                            '#episode_date',
+                        ];
+                        for (const sel of selectors) {
+                            const el = document.querySelector(sel);
+                            if (el) {
+                                el.value = dateStr;
+                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                                el.dispatchEvent(new Event('change', {bubbles: true}));
+                                return 'filled: ' + sel;
+                            }
+                        }
+                        // Fallback: find date input near episode identifier by label
+                        const labels = document.querySelectorAll('label');
+                        for (const lbl of labels) {
+                            const text = lbl.textContent.toLowerCase();
+                            if (text.includes('date') && (text.includes('episode') || text.includes('release') || text.includes('air'))) {
+                                const input = document.getElementById(lbl.htmlFor) ||
+                                              lbl.querySelector('input') ||
+                                              lbl.closest('.form-row')?.querySelector('input[type="text"], input[type="date"]');
+                                if (input) {
+                                    input.value = dateStr;
+                                    input.dispatchEvent(new Event('input', {bubbles: true}));
+                                    input.dispatchEvent(new Event('change', {bubbles: true}));
+                                    return 'filled via label: ' + input.id;
+                                }
+                            }
+                        }
+                        // Last resort: find any date-type input in the same section
+                        const epRow = document.querySelector('[id*="episode"]');
+                        if (epRow) {
+                            const dateInput = epRow.parentElement?.querySelector('input[type="date"], input[name*="date"]');
+                            if (dateInput) {
+                                dateInput.value = dateStr;
+                                dateInput.dispatchEvent(new Event('change', {bubbles: true}));
+                                return 'filled nearby: ' + dateInput.id;
+                            }
+                        }
+                        return 'not found';
+                    }
+                """, today_str)
+                logger.info(f"Episode date result: {result}")
+                time.sleep(1)
+            except Exception as e:
+                logger.warning(f"Episode date failed: {e}")
+
         # Title — #piece_title
         logger.info(f"Setting title: {title}")
         try:
