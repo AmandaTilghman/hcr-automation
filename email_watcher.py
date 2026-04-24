@@ -114,9 +114,10 @@ def check_for_notification(email_config: dict, processed_ids: set = None) -> dic
         mail.select("INBOX")
 
         # Build search criteria — date-based instead of UNSEEN
-        from datetime import datetime as _dt
-        today = _dt.now().strftime("%d-%b-%Y")  # IMAP date format
-        criteria = [f'SINCE "{today}"']
+        # Look back 3 days to catch any missed emails (weekends, delays)
+        from datetime import datetime as _dt, timedelta as _td
+        since_date = (_dt.now() - _td(days=3)).strftime("%d-%b-%Y")
+        criteria = [f'SINCE "{since_date}"']
         if from_filter:
             criteria.append(f'FROM "{from_filter}"')
         if subject_filter:
