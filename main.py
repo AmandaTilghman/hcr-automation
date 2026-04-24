@@ -81,7 +81,10 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
 
     # --- Step 1: Check email ---
     logger.info("Checking email for new notifications...")
-    notification = check_for_notification(config["email"])
+    notification = check_for_notification(
+        config["email"],
+        processed_ids=set(state.data.get("processed", {}).keys())
+    )
 
     if notification is None:
         logger.info("No new notifications found. Done.")

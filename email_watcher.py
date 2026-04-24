@@ -85,18 +85,16 @@ def decode_subject(subject_raw) -> str:
     return subject
 
 
-def check_for_notification(email_config: dict) -> dict | None:
+def check_for_notification(email_config: dict, processed_ids: set = None) -> dict | None:
     """
     Check IMAP inbox for an unprocessed notification email.
 
-    Returns dict with email details if found, None otherwise:
-    {
-        "email_id": str,
-        "subject": str,
-        "from": str,
-        "date": str,
-        "body_preview": str,
-    }
+    Uses date-based search (SINCE today) instead of UNSEEN so that
+    emails already read by another client (phone, webmail) are still
+    picked up.  Deduplication is handled via the processed_ids set
+    (from ProcessingState) passed in by the caller.
+
+    Returns dict with email details if found, None otherwise.
     """
     server = email_config["imap_server"]
     port = email_config.get("imap_port", 993)
@@ -106,14 +104,19 @@ def check_for_notification(email_config: dict) -> dict | None:
     subject_filter = email_config.get("subject_filter", "")
     processed_folder = email_config.get("processed_folder", "Processed")
 
+    if processed_ids is None:
+        processed_ids = set()
+
     try:
         # Connect
         mail = imaplib.IMAP4_SSL(server, port)
         mail.login(username, password)
         mail.select("INBOX")
 
-        # Build search criteria
-        criteria = ["UNSEEN"]
+        # Build search criteria — date-based instead of UNSEEN
+        from datetime import datetime as _dt
+        today = _dt.now().strftime("%d-%b-%Y")  # IMAP date format
+        criteria = [f'SINCE "{today}"']
         if from_filter:
             criteria.append(f'FROM "{from_filter}"')
         if subject_filter:
@@ -128,67 +131,76 @@ def check_for_notification(email_config: dict) -> dict | None:
             mail.logout()
             return None
 
-        # Get the most recent matching email
+        # Check all matching emails, newest first
         email_ids = messages[0].split()
-        latest_id = email_ids[-1]  # Most recent
 
-        status, msg_data = mail.fetch(latest_id, "(RFC822)")
-        if status != "OK":
-            logger.error(f"Failed to fetch email {latest_id}")
+        for eid in reversed(email_ids):
+            status, msg_data = mail.fetch(eid, "(RFC822)")
+            if status != "OK":
+                logger.error(f"Failed to fetch email {eid}")
+                continue
+
+            raw_email = msg_data[0][1]
+            msg = email.message_from_bytes(raw_email)
+            message_id = msg["Message-ID"] or str(eid)
+
+            # Skip already-processed emails
+            if message_id in processed_ids:
+                logger.debug(f"Email {message_id} already processed, skipping.")
+                continue
+
+            subject = decode_subject(msg["Subject"] or "")
+            sender = msg["From"] or ""
+            date = msg["Date"] or ""
+
+            # Extract full body text (need enough to find keywords at the end)
+            body_preview = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == "text/plain":
+                        charset = part.get_content_charset() or "utf-8"
+                        body_preview = part.get_payload(decode=True).decode(
+                            charset, errors="replace"
+                        )[:5000]
+                        break
+            else:
+                charset = msg.get_content_charset() or "utf-8"
+                body_preview = msg.get_payload(decode=True).decode(
+                    charset, errors="replace"
+                )[:5000]
+
+            # Ensure the "Processed" folder exists, then move the email there
+            try:
+                mail.create(processed_folder)
+            except Exception:
+                pass  # Folder may already exist
+
+            mail.copy(eid, processed_folder)
+            mail.store(eid, "+FLAGS", "\\Deleted")
+            mail.expunge()
+
             mail.logout()
-            return None
 
-        raw_email = msg_data[0][1]
-        msg = email.message_from_bytes(raw_email)
+            # Extract keywords/tags from body
+            tags = extract_keywords(body_preview)
 
-        subject = decode_subject(msg["Subject"] or "")
-        sender = msg["From"] or ""
-        date = msg["Date"] or ""
-        message_id = msg["Message-ID"] or str(latest_id)
+            # Check for explicit content mentions
+            has_explicit = detect_explicit_content(body_preview)
 
-        # Extract full body text (need enough to find keywords at the end)
-        body_preview = ""
-        if msg.is_multipart():
-            for part in msg.walk():
-                if part.get_content_type() == "text/plain":
-                    charset = part.get_content_charset() or "utf-8"
-                    body_preview = part.get_payload(decode=True).decode(
-                        charset, errors="replace"
-                    )[:5000]
-                    break
-        else:
-            charset = msg.get_content_charset() or "utf-8"
-            body_preview = msg.get_payload(decode=True).decode(
-                charset, errors="replace"
-            )[:5000]
+            return {
+                "email_id": message_id,
+                "subject": subject,
+                "from": sender,
+                "date": date,
+                "body_preview": body_preview.strip(),
+                "tags": tags,
+                "has_explicit_content": has_explicit,
+            }
 
-        # Ensure the "Processed" folder exists, then move the email there
-        try:
-            mail.create(processed_folder)
-        except Exception:
-            pass  # Folder may already exist
-
-        mail.copy(latest_id, processed_folder)
-        mail.store(latest_id, "+FLAGS", "\\Deleted")
-        mail.expunge()
-
+        # All matching emails were already processed
+        logger.debug("All matching emails already processed.")
         mail.logout()
-
-        # Extract keywords/tags from body
-        tags = extract_keywords(body_preview)
-
-        # Check for explicit content mentions
-        has_explicit = detect_explicit_content(body_preview)
-
-        return {
-            "email_id": message_id,
-            "subject": subject,
-            "from": sender,
-            "date": date,
-            "body_preview": body_preview.strip(),
-            "tags": tags,
-            "has_explicit_content": has_explicit,
-        }
+        return None
 
     except imaplib.IMAP4.error as e:
         logger.error(f"IMAP error: {e}")
