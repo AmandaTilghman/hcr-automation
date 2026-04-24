@@ -48,25 +48,6 @@ def setup_logging(config: dict) -> logging.Logger:
     return logger
 
 
-def is_within_schedule(config: dict) -> bool:
-    """Check if current time is within the polling window."""
-    try:
-        import pytz
-    except ImportError:
-        # If pytz not installed, skip time check
-        return True
-
-    schedule = config.get("schedule", {})
-    tz_name = schedule.get("timezone", "US/Eastern")
-    start_hour = schedule.get("start_hour", 11)
-    end_hour = schedule.get("end_hour", 20)
-
-    tz = pytz.timezone(tz_name)
-    now = datetime.now(tz)
-    current_hour = now.hour
-
-    return start_hour <= current_hour < end_hour
-
 
 def run_pipeline(config: dict, logger: logging.Logger) -> bool:
     """
@@ -253,11 +234,6 @@ def main():
 
     logger.info("=" * 50)
     logger.info("Radio Automation Pipeline starting")
-
-    # Check if we're in the schedule window
-    if not is_within_schedule(config):
-        logger.info("Outside scheduled hours. Exiting.")
-        sys.exit(0)
 
     try:
         processed = run_pipeline(config, logger)
