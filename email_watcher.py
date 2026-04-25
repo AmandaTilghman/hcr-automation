@@ -73,6 +73,59 @@ def extract_keywords(body: str) -> list:
     return tags
 
 
+def move_email_to_processed(email_config: dict, message_id: str):
+    """
+    Move a notification email to the Processed folder AFTER the pipeline succeeds.
+    Called from main.py only on successful completion.
+    """
+    server = email_config["imap_server"]
+    port = email_config.get("imap_port", 993)
+    username = email_config["username"]
+    password = email_config["password"]
+    from_filter = email_config.get("from_filter", "")
+    subject_filter = email_config.get("subject_filter", "")
+    processed_folder = email_config.get("processed_folder", "Processed")
+
+    try:
+        mail = imaplib.IMAP4_SSL(server, port)
+        mail.login(username, password)
+        mail.select("INBOX")
+
+        # Search for the specific email by Message-ID
+        from datetime import datetime as _dt, timedelta as _td
+        since_date = (_dt.now() - _td(days=3)).strftime("%d-%b-%Y")
+        criteria = [f'SINCE "{since_date}"']
+        if from_filter:
+            criteria.append(f'FROM "{from_filter}"')
+
+        status, messages = mail.search(None, *criteria)
+        if status != "OK" or not messages[0]:
+            logger.warning("Could not find email to move to Processed.")
+            mail.logout()
+            return
+
+        for eid in messages[0].split():
+            status, msg_data = mail.fetch(eid, "(RFC822)")
+            if status != "OK":
+                continue
+            msg = email.message_from_bytes(msg_data[0][1])
+            mid = msg["Message-ID"] or str(eid)
+            if mid == message_id:
+                try:
+                    mail.create(processed_folder)
+                except Exception:
+                    pass
+                mail.copy(eid, processed_folder)
+                mail.store(eid, "+FLAGS", "\\Deleted")
+                mail.expunge()
+                logger.info(f"Email moved to {processed_folder}: {message_id}")
+                break
+
+        mail.logout()
+    except Exception as e:
+        logger.warning(f"Could not move email to Processed: {e}")
+
+
 def decode_subject(subject_raw) -> str:
     """Decode email subject which may be encoded."""
     decoded_parts = decode_header(subject_raw)
@@ -170,15 +223,9 @@ def check_for_notification(email_config: dict, processed_ids: set = None) -> dic
                     charset, errors="replace"
                 )[:5000]
 
-            # Ensure the "Processed" folder exists, then move the email there
-            try:
-                mail.create(processed_folder)
-            except Exception:
-                pass  # Folder may already exist
-
-            mail.copy(eid, processed_folder)
-            mail.store(eid, "+FLAGS", "\\Deleted")
-            mail.expunge()
+            # DON'T move the email yet — wait until pipeline succeeds.
+            # Deduplication is handled by processed_ids (from state.json).
+            # Call move_email_to_processed() after the pipeline completes.
 
             mail.logout()
 

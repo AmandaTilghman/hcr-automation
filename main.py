@@ -14,11 +14,43 @@ from pathlib import Path
 from datetime import datetime
 
 from config_loader import load_config
-from email_watcher import check_for_notification
+from email_watcher import check_for_notification, move_email_to_processed
 from ftp_downloader import download_audio
 from transcoder import transcode_wav_to_mp2
 from prx_uploader import PRXClient
 from state import ProcessingState
+
+def send_failure_alert(config: dict, subject: str, body: str):
+    """
+    Send an alert email when the pipeline finds an episode but fails to process it.
+    Uses the same Gmail credentials as the email watcher.
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+
+    try:
+        email_cfg = config.get("email", {})
+        alert_to = config.get("alerting", {}).get("alert_email", "")
+        if not alert_to:
+            # Fallback: log the failure but can't email
+            logging.getLogger("radio-automation").error(
+                f"ALERT (no alert_email configured): {subject} — {body}"
+            )
+            return
+
+        msg = MIMEText(body)
+        msg["Subject"] = f"🚨 HCR Pipeline: {subject}"
+        msg["From"] = email_cfg["username"]
+        msg["To"] = alert_to
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(email_cfg["username"], email_cfg["password"])
+            server.send_message(msg)
+
+        logging.getLogger("radio-automation").info(f"Failure alert sent to {alert_to}")
+    except Exception as e:
+        logging.getLogger("radio-automation").error(f"Could not send failure alert: {e}")
+
 
 def setup_logging(config: dict) -> logging.Logger:
     """Configure logging to file + console."""
@@ -49,9 +81,13 @@ def setup_logging(config: dict) -> logging.Logger:
 
 
 
-def run_pipeline(config: dict, logger: logging.Logger) -> bool:
+def run_pipeline(config: dict, logger: logging.Logger) -> str:
     """
-    Execute the full pipeline. Returns True if a file was processed.
+    Execute the full pipeline.
+    Returns:
+        "processed" — episode found and successfully handled
+        "no_email"  — no new notification (normal, no alert)
+        "failed"    — episode found but pipeline failed (alert!)
     """
     state = ProcessingState(config["paths"]["processed_log"])
     paths = config["paths"]
@@ -69,12 +105,12 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
 
     if notification is None:
         logger.info("No new notifications found. Done.")
-        return False
+        return "no_email"
 
     email_id = notification["email_id"]
     if state.is_processed(email_id):
         logger.info(f"Email {email_id} already processed. Skipping.")
-        return False
+        return "no_email"
 
     logger.info(f"Found notification: {notification['subject']}")
 
@@ -87,7 +123,7 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
         )
     except Exception as e:
         logger.error(f"FTP download failed: {e}")
-        return False
+        return "failed"
 
     logger.info(f"Downloaded: {downloaded_file}")
 
@@ -101,7 +137,7 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
         )
     except Exception as e:
         logger.error(f"Transcode failed: {e}")
-        return False
+        return "failed"
 
     logger.info(f"Transcoded: {output_file}")
 
@@ -161,11 +197,14 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
 
     if not story_urls:
         logger.error("All PRX uploads failed.")
-        return False
+        return "failed"
 
     logger.info(f"Published {len(story_urls)}/{len(series_list)} pieces to PRX.")
 
-    # --- Step 5: Mark as processed ---
+    # --- Step 5: Mark as processed and move email ---
+    # Move email to "Processed" folder ONLY after successful upload
+    move_email_to_processed(config["email"], email_id)
+
     state.mark_processed(email_id, {
         "subject": notification["subject"],
         "downloaded_file": str(downloaded_file),
@@ -176,7 +215,7 @@ def run_pipeline(config: dict, logger: logging.Logger) -> bool:
     })
 
     logger.info("Pipeline complete!")
-    return True
+    return "processed"
 
 
 def _increment_episode_number(config: dict, logger: logging.Logger):
@@ -236,10 +275,41 @@ def main():
     logger.info("Radio Automation Pipeline starting")
 
     try:
-        processed = run_pipeline(config, logger)
-        sys.exit(0 if processed or True else 0)  # Always exit 0 unless error
+        result = run_pipeline(config, logger)
+
+        if result == "processed":
+            logger.info("Episode processed successfully.")
+        elif result == "no_email":
+            logger.info("No episode today — exiting quietly.")
+        elif result == "failed":
+            logger.error("Episode found but pipeline FAILED.")
+            send_failure_alert(
+                config,
+                subject="Episode found but processing failed",
+                body=(
+                    "The HCR automation pipeline found a new episode notification "
+                    "but failed during processing.\n\n"
+                    "Check the log on the Linux box:\n"
+                    "  tail -100 /opt/hcr-automation/radio-automation.log\n\n"
+                    "The pipeline will retry on the next cron run if the email "
+                    "hasn't been moved to 'Processed' yet."
+                ),
+            )
+            sys.exit(1)
+
+        sys.exit(0)
     except Exception as e:
         logger.exception(f"Unexpected error: {e}")
+        send_failure_alert(
+            config,
+            subject=f"Unexpected crash: {type(e).__name__}",
+            body=(
+                f"The HCR automation pipeline crashed unexpectedly.\n\n"
+                f"Error: {e}\n\n"
+                f"Check the log:\n"
+                f"  tail -100 /opt/hcr-automation/radio-automation.log"
+            ),
+        )
         sys.exit(1)
 
 

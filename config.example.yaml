@@ -61,6 +61,11 @@ schedule:
   check_interval_minutes: 15
   timezone: "US/Eastern"
 
+alerting:
+  # Email address to notify when the pipeline finds an episode but fails
+  # No alerts for "no episode today" — only actual failures
+  alert_email: "amanda@whcp.org"
+
 logging:
   level: "INFO"
   file: "radio-automation.log"
