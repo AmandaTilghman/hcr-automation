@@ -478,8 +478,34 @@ class PRXClient:
     def _fill_permissions_tab(self):
         logger.info("=== PERMISSIONS TAB ===")
 
-        # Pricing — #piece_point_level select, keep default (0 points)
-        logger.info("Pricing: keeping default (0 points)")
+        # Pricing — #piece_point_level select, explicitly set to Free (0 points)
+        logger.info("Setting pricing to Free (0 points)...")
+        try:
+            result = self.page.evaluate("""
+                () => {
+                    const sel = document.querySelector('#piece_point_level');
+                    if (!sel) return 'select not found';
+                    // Find the "Free" option (value likely '0' or first option)
+                    const opts = Array.from(sel.options);
+                    const freeOpt = opts.find(o => o.text.toLowerCase().includes('free'));
+                    if (freeOpt) {
+                        sel.value = freeOpt.value;
+                        sel.dispatchEvent(new Event('change', {bubbles: true}));
+                        return 'set to: ' + freeOpt.text.trim();
+                    }
+                    // Fallback: select first option (usually Free)
+                    if (opts.length > 0) {
+                        sel.value = opts[0].value;
+                        sel.dispatchEvent(new Event('change', {bubbles: true}));
+                        return 'fallback to first: ' + opts[0].text.trim();
+                    }
+                    return 'no options found';
+                }
+            """)
+            logger.info(f"Pricing result: {result}")
+            time.sleep(1)
+        except Exception as e:
+            logger.warning(f"Pricing set failed: {e}")
 
         # Embedding — #piece_is_shareable checkbox (checked by default)
         # Uncheck it to disable embedding/streaming on other sites
